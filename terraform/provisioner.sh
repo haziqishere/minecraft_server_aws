@@ -86,12 +86,12 @@ cat > /opt/kroni-survival/scripts/backup-to-s3.sh << 'EOF'
 set -e
 
 # Variables
-WORLD_PATH="${MINECRAFT_WORLD_PATH}"
-S3_BUCKET="${S3_BACKUP_BUCKET}"
+WORLD_PATH="MINECRAFT_WORLD_PATH_VALUE"
+S3_BUCKET="S3_BUCKET_VALUE"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_FILE="minecraft-world-backup-$TIMESTAMP.tar.gz"
 TMP_DIR="/tmp"
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
+DISCORD_WEBHOOK_URL="DISCORD_WEBHOOK_URL_VALUE"
 
 # Compress the world directory
 echo "Creating backup archive..."
@@ -112,6 +112,12 @@ fi
 
 echo "Backup completed successfully!"
 EOF
+
+# Replace placeholders in backup-to-s3.sh
+sed -i "s|MINECRAFT_WORLD_PATH_VALUE|$MINECRAFT_WORLD_PATH|g" /opt/kroni-survival/scripts/backup-to-s3.sh
+sed -i "s|S3_BUCKET_VALUE|$S3_BACKUP_BUCKET|g" /opt/kroni-survival/scripts/backup-to-s3.sh
+sed -i "s|DISCORD_WEBHOOK_URL_VALUE|$DISCORD_WEBHOOK_URL|g" /opt/kroni-survival/scripts/backup-to-s3.sh
+
 sudo chmod +x /opt/kroni-survival/scripts/backup-to-s3.sh
 
 # Create snapshot script
@@ -121,11 +127,11 @@ cat > /opt/kroni-survival/scripts/create-snapshots.sh << 'EOF'
 set -e
 
 # Variables
-INSTANCE_NAME="${INSTANCE_NAME}"
-VOLUME_NAME="${VOLUME_NAME}"
+INSTANCE_NAME="INSTANCE_NAME_VALUE"
+VOLUME_NAME="VOLUME_NAME_VALUE"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-RETENTION_DAYS=${SNAPSHOT_RETENTION_DAYS}
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
+RETENTION_DAYS=RETENTION_DAYS_VALUE
+DISCORD_WEBHOOK_URL="DISCORD_WEBHOOK_URL_VALUE"
 
 # Create instance snapshot
 echo "Creating instance snapshot..."
@@ -173,6 +179,13 @@ fi
 
 echo "Snapshots created successfully!"
 EOF
+
+# Replace placeholders in create-snapshots.sh
+sed -i "s|INSTANCE_NAME_VALUE|$INSTANCE_NAME|g" /opt/kroni-survival/scripts/create-snapshots.sh
+sed -i "s|VOLUME_NAME_VALUE|$VOLUME_NAME|g" /opt/kroni-survival/scripts/create-snapshots.sh
+sed -i "s|RETENTION_DAYS_VALUE|$SNAPSHOT_RETENTION_DAYS|g" /opt/kroni-survival/scripts/create-snapshots.sh
+sed -i "s|DISCORD_WEBHOOK_URL_VALUE|$DISCORD_WEBHOOK_URL|g" /opt/kroni-survival/scripts/create-snapshots.sh
+
 sudo chmod +x /opt/kroni-survival/scripts/create-snapshots.sh
 
 # Create Discord notification script
@@ -181,7 +194,7 @@ cat > /opt/kroni-survival/scripts/notify-discord.sh << 'EOF'
 #!/bin/bash
 
 # Variables
-WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
+WEBHOOK_URL="DISCORD_WEBHOOK_URL_VALUE"
 MESSAGE="$1"
 
 if [ -z "$MESSAGE" ]; then
@@ -197,6 +210,10 @@ fi
 # Send notification to Discord
 curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$MESSAGE\"}" $WEBHOOK_URL
 EOF
+
+# Replace placeholder in notify-discord.sh
+sed -i "s|DISCORD_WEBHOOK_URL_VALUE|$DISCORD_WEBHOOK_URL|g" /opt/kroni-survival/scripts/notify-discord.sh
+
 sudo chmod +x /opt/kroni-survival/scripts/notify-discord.sh
 
 # Create cron jobs
@@ -206,7 +223,7 @@ echo "=== Setting up cron jobs ==="
 
 # Create CloudWatch agent configuration
 echo "=== Configuring CloudWatch agent ==="
-cat > /tmp/cloudwatch-config.json << 'EOF'
+cat > /tmp/cloudwatch-config.json << EOF
 {
   "agent": {
     "metrics_collection_interval": 60,
@@ -222,7 +239,7 @@ cat > /tmp/cloudwatch-config.json << 'EOF'
           "/"
         ],
         "append_dimensions": {
-          "InstanceId": "${aws:InstanceId}"
+          "InstanceId": "$${aws:InstanceId}"
         }
       },
       "mem": {
@@ -230,7 +247,7 @@ cat > /tmp/cloudwatch-config.json << 'EOF'
           "mem_used_percent"
         ],
         "append_dimensions": {
-          "InstanceId": "${aws:InstanceId}"
+          "InstanceId": "$${aws:InstanceId}"
         }
       },
       "cpu": {
@@ -241,14 +258,14 @@ cat > /tmp/cloudwatch-config.json << 'EOF'
         ],
         "totalcpu": true,
         "append_dimensions": {
-          "InstanceId": "${aws:InstanceId}"
+          "InstanceId": "$${aws:InstanceId}"
         }
       }
     },
     "append_dimensions": {
-      "ImageId": "${aws:ImageId}",
-      "InstanceType": "${aws:InstanceType}",
-      "AutoScalingGroupName": "${aws:AutoScalingGroupName}"
+      "ImageId": "$${aws:ImageId}",
+      "InstanceType": "$${aws:InstanceType}",
+      "AutoScalingGroupName": "$${aws:AutoScalingGroupName}"
     }
   },
   "logs": {

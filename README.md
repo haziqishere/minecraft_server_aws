@@ -20,21 +20,7 @@ Kroni Survival is a Minecraft server deployment solution that provides:
 - SSH key pair registered with AWS Lightsail
 - S3 bucket for Terraform state (optional but recommended)
 
-## Project Structure
-
-```
-minecraft-server-on-aws/
-├── terraform/
-│   ├── main.tf          # Main Terraform configuration
-│   ├── variables.tf     # Input variables
-│   ├── outputs.tf       # Output values
-│   ├── provider.tf      # AWS provider configuration
-│   └── provisioner.sh   # Server provisioning script
-├── scripts/
-│   ├── docker-install.sh    # Docker installation script
-│   ├── backup-to-s3.sh      # S3 backup script
-│   └── notify-discord.sh    # Discord notification script
-├── prefect/
+ prefect/
 │   └── snapshot_flow.py     # Prefect workflow for backups
 ├── .github/
 │   └── workflows/

@@ -5,7 +5,7 @@ output "minecraft_server_ip" {
 
 output "minecraft_server_dns" {
   description = "DNS name of the Minecraft server"
-  value       = aws_lightsail_instance.minecraft_server.public_dns
+  value       = aws_lightsail_instance.minecraft_server.arn
 }
 
 output "minecraft_server_port" {
