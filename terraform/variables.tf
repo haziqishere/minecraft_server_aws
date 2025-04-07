@@ -79,7 +79,7 @@ variable "ssh_key_name" {
 variable "s3_backup_bucket_name" {
   description = "Name of the S3 bucket for world backups"
   type        = string
-  default     = "kroni-survival-backups"
+  default     = "kroni-survival-backups-secure"
 }
 
 variable "discord_webhook_url" {

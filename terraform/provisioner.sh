@@ -237,18 +237,12 @@ cat > /tmp/cloudwatch-config.json << EOF
         ],
         "resources": [
           "/"
-        ],
-        "append_dimensions": {
-          "InstanceId": "$${aws:InstanceId}"
-        }
+        ]
       },
       "mem": {
         "measurement": [
           "mem_used_percent"
-        ],
-        "append_dimensions": {
-          "InstanceId": "$${aws:InstanceId}"
-        }
+        ]
       },
       "cpu": {
         "measurement": [
@@ -256,16 +250,8 @@ cat > /tmp/cloudwatch-config.json << EOF
           "cpu_usage_user",
           "cpu_usage_system"
         ],
-        "totalcpu": true,
-        "append_dimensions": {
-          "InstanceId": "$${aws:InstanceId}"
-        }
+        "totalcpu": true
       }
-    },
-    "append_dimensions": {
-      "ImageId": "$${aws:ImageId}",
-      "InstanceType": "$${aws:InstanceType}",
-      "AutoScalingGroupName": "$${aws:AutoScalingGroupName}"
     }
   },
   "logs": {
