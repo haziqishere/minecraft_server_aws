@@ -25,7 +25,7 @@ variable "lightsail_instance_blueprint" {
 variable "lightsail_instance_bundle" {
   description = "Lightsail instance bundle (size)"
   type        = string
-  default     = "micro_2_0"
+  default     = "small_3_0"
 }
 
 variable "lightsail_volume_size" {
