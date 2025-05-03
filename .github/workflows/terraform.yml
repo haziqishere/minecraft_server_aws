@@ -205,6 +205,17 @@ jobs:
           PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
           
+      - name: Prepare Instance
+        run: |
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
+
       - name: Deploy Prefect Flows
         run: |
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@$PREFECT_IP "cd /opt/prefect && ./deploy_prefect.sh update"
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+          ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
