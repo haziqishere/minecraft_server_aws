@@ -64,6 +64,9 @@ variable "minecraft_server_port" {
   default     = 25565
 }
 
+
+# TODO: Add Bastion instance then make this CIDR more restrictive
+
 variable "ssh_allowed_cidrs" {
   description = "CIDR blocks allowed for SSH access"
   type        = list(string)
@@ -76,6 +79,12 @@ variable "ssh_key_name" {
   default     = "kroni-survival-key"
 }
 
+variable "prefect_ui_allowed_cidrs" {
+  description = "CIDR blocks allowed to access the Prefect UI"
+  type        = list(string)
+  default     = ["0.0.0.0/0"] # This should be restricted in production
+}
+
 variable "s3_backup_bucket_name" {
   description = "Name of the S3 bucket for world backups"
   type        = string
@@ -86,7 +95,7 @@ variable "discord_webhook_url" {
   description = "Discord webhook URL for notifications"
   type        = string
   sensitive   = true
-  default     = ""
+  default     = "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9"
 }
 
 variable "backup_schedule_cron" {
@@ -106,3 +115,10 @@ variable "snapshot_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "discord_rate_limit" {
+  description = "Maximum number of Discord webhook calls per day"
+  type        = number
+  default     = 30 # Conservative estimate for free Discord webhooks
+}
+

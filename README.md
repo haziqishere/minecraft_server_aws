@@ -1,6 +1,4 @@
-# Kroni Survival Minecraft Server
-
-A lightweight, cost-effective, self-hosted Minecraft server infrastructure on AWS Lightsail using Infrastructure as Code (Terraform).
+# 🎮 Kroni Survival Minecraft Server on AWS
 
 ## Project Overview
 
@@ -13,8 +11,65 @@ Kroni Survival is a Minecraft server deployment solution that provides:
 - Monitoring via CloudWatch and Grafana
 - Discord notifications for server events
 
-## Prerequisites
 
+## 📝 Key Features
+
+- **AWS Lightsail Instance** with Docker
+- **Minecraft Server** (with cracked client support)
+- **Persistent Storage** with Lightsail Block Storage
+- **Automated Backups**:
+  - Lightsail snapshots (biweekly)
+  - S3 backups
+- **Discord Notifications** for backups and monitoring
+- **Prefect Workflows** for server monitoring and backup automation
+- **CloudWatch Integration** for system metrics
+- **Grafana Dashboard** for visualization
+
+## 🏗️ Architecture
+
+```
+                   ┌──────────────────────────────┐
+                   │       You & Friends          │
+                   │       (Singapore)            │
+                   └────────────┬─────────────────┘
+                                │
+                                ▼
+                   ┌──────────────────────────────┐
+                   │     Lightsail Firewall       │
+                   │   - Port 25565 (MC)          │
+                   │   - Port 22 (optional SSH)   │
+                   │   - Port 4200 (Prefect UI)   │
+                   └────────────┬─────────────────┘
+                                ▼
+                   ┌──────────────────────────────┐
+                   │  Lightsail Instance          │
+                   │  - 2vCPU, 2GB RAM (small_3_0) │
+                   │  - Docker                    │
+                   │  - Minecraft Container       │
+                   └────────────┬─────────────────┘
+                                │
+                                ▼
+                   ┌──────────────────────────────┐
+                   │  Lightsail Block Storage     │
+                   │  - Mounted to /data          │
+                   │  - World stored at /data/world │
+                   └────────────┬─────────────────┘
+                                ▼
+       ┌────────────────────────┴────────────────────────┐
+       │              Automation & Monitoring            │
+       │ ┌────────────────┐ ┌─────────────────────────┐  │
+       │ │ Prefect (DAG)  │ │ GitHub Actions (CI/CD)  │  │
+       │ └────────────────┘ └─────────────────────────┘  │
+       │ ┌────────────────────────────────────────────┐  │
+       │ │ Cron Jobs (Snapshots + S3 backup scripts)  │  │
+       │ └────────────────────────────────────────────┘  │
+       │ ┌────────────────────────────────────────────┐  │
+       │ │ CloudWatch Agent → Grafana Cloud Dashboard │  │
+       │ └────────────────────────────────────────────┘  │
+       └─────────────────────────────────────────────────┘
+```
+
+## 🏗️ Prerequisites
 - [Terraform](https://www.terraform.io/downloads.html) (v1.0.0+)
 - [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate credentials
 - SSH key pair registered with AWS Lightsail
@@ -27,9 +82,12 @@ Kroni Survival is a Minecraft server deployment solution that provides:
 │       └── terraform.yml    # GitHub Actions workflow
 ├── README.md                # Project documentation
 └── .env.example             # Example environment variables
+
+- Discord webhook URL (for notification)
 ```
 
 ## Deployment Instructions
+
 
 ### Initial Setup
 
@@ -71,6 +129,11 @@ Connect to the server using the IP address from the Terraform output and port 25
 
 ## Backup and Restore
 
+Two types of backups are configured:
+
+- S3 Backups: Daily tar-compressed world data
+- Lightsail Snapshots: Biweekly snapshots of both instance and data volume
+
 ### Manual Backup
 
 To manually trigger a backup:
@@ -90,10 +153,12 @@ To restore from an S3 backup:
 
 ## Monitoring
 
-The server metrics are available in CloudWatch. If you've set up Grafana Cloud:
+📊 Monitoring
+The system includes a Prefect dashboard for monitoring server status and scheduled tasks:
 
-1. Log in to your Grafana Cloud account
-2. Navigate to the Kroni Survival dashboard
+Prefect UI: Access at http://your-server-ip:4200
+CloudWatch Metrics: View in AWS Console or Grafana dashboard
+Discord Notifications: Regular updates on server health and backups
 
 ## Maintenance
 
@@ -125,10 +190,13 @@ sudo docker logs minecraft-server
 - S3 Storage for backups: Varies based on world size
 - Data Transfer: Varies based on player count
 
-## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
+## 📜 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgements
+
+- [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) Docker image
+- [Prefect](https://www.prefect.io/) for workflow automation
+- [Terraform](https://www.terraform.io/) for infrastructure as code

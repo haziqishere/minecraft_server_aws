@@ -1,4 +1,6 @@
-# Create Lightsail instance
+##################################################
+# Create Lightsail instance for Minecraft server #
+##################################################
 resource "aws_lightsail_instance" "minecraft_server" {
   name              = var.lightsail_instance_name
   availability_zone = "${var.aws_region}a"
@@ -181,6 +183,7 @@ resource "aws_iam_access_key" "minecraft_backup" {
 
 # Generate provisioner script using built-in templatefile function
 locals {
+  # Provisioner script to be executed on the Lightsail instance
   provisioner_script = templatefile("${path.module}/provisioner.sh", {
     # Original lowercase variables
     aws_region              = var.aws_region
@@ -244,3 +247,55 @@ resource "null_resource" "provision_server" {
     aws_iam_user_policy_attachment.s3_backup_attachment
   ]
 }
+
+
+##################################################
+#      Create Lightsail instance for Prefect     #
+##################################################
+
+# Prefect orchestration instance
+resource "aws_lightsail_instance" "prefect_orchestration" {
+  name              = "kroni-survival-prefect-orchestration"
+  availability_zone = "${var.aws_region}a"
+  blueprint_id      = "amazon_linux_2"
+  bundle_id         = "nano_3_0"
+  key_pair_name     = var.ssh_key_name
+
+  tags = {
+    Name = "kroni-prefect-orchestration"
+  }
+}
+
+# Static IP for Prefect instance
+resource "aws_lightsail_static_ip" "prefect_orchestration" {
+  name = "kroni-prefect-static-ip"
+}
+
+# Attach static IP to Prefect instance
+resource "aws_lightsail_static_ip_attachment" "prefect_orchestration" {
+  static_ip_name = aws_lightsail_static_ip.prefect_orchestration.name
+  instance_name  = aws_lightsail_instance.prefect_orchestration.name
+}
+
+# Configure firewall rules for the Prefect instance
+resource "aws_lightsail_instance_public_ports" "prefect_orchestration" {
+  instance_name = aws_lightsail_instance.prefect_orchestration.name
+
+  # Allow Prefect UI port
+  port_info {
+    protocol  = "tcp"
+    from_port = 4200
+    to_port   = 4200
+    cidrs     = var.prefect_ui_allowed_cidrs
+  }
+
+  # Allow SSH access
+  port_info {
+    protocol  = "tcp"
+    from_port = 22
+    to_port   = 22
+    cidrs     = var.ssh_allowed_cidrs
+  }
+
+}
+
