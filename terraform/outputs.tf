@@ -48,3 +48,14 @@ output "snapshot_schedule" {
   description = "Schedule for Lightsail snapshots (cron expression)"
   value       = var.snapshot_schedule_cron
 }
+
+### Prefect
+output "prefect_orchestration_ip" {
+  description = "IP address of the Prefect orchestration instance"
+  value       = aws_lightsail_static_ip.prefect_orchestration.ip_address
+}
+
+output "prefect_ui_url" {
+  description = "URL to access the Prefect UI"
+  value       = "http://${aws_lightsail_static_ip.prefect_orchestration.ip_address}:4200"
+}

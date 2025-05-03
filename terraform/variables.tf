@@ -79,11 +79,6 @@ variable "ssh_key_name" {
   default     = "kroni-survival-key"
 }
 
-variable "prefect_ui_allowed_cidrs" {
-  description = "CIDR blocks allowed to access the Prefect UI"
-  type        = list(string)
-  default     = ["0.0.0.0/0"] # This should be restricted in production
-}
 
 variable "s3_backup_bucket_name" {
   description = "Name of the S3 bucket for world backups"
@@ -122,3 +117,22 @@ variable "discord_rate_limit" {
   default     = 30 # Conservative estimate for free Discord webhooks
 }
 
+
+#### Prefect Variables ####
+variable "prefect_docker_image" {
+  description = "Docker image to use for Prefect"
+  type        = string
+  default     = "haziqishere/custom-prefect:latest"
+}
+
+variable "monitoring_interval" {
+  description = "Interval in minutes for server monitoring"
+  type        = number
+  default     = 30
+}
+
+variable "prefect_ui_allowed_cidrs" {
+  description = "CIDR blocks allowed to access the Prefect UI"
+  type        = list(string)
+  default     = ["0.0.0.0/0"] # This should be restricted in production
+}
