@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 
 # Installing Prefect & Other dependencies
 RUN pip install --upgrade pip \
-    prefect==2.13.0 boto3 requests psutil paramiko python-dotenv
+    prefect==2.13.0 boto3 requests psutil paramiko python-dotenv griffe>=0.25.1
 
 #-----------------------------------------------------------------------#
 # Configure the Prefect server
