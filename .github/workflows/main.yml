@@ -66,10 +66,7 @@ jobs:
       - name: Get Prefect instance IP
         id: prefect_ip
         run: |
-          PREFECT_IP=$(aws lightsail get-instance \
-            --instance-name kroni-survival-prefect-orchestration \
-            --query 'instance.publicIpAddress' \
-            --output text)
+          PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
       
       # Setup SSH for connecting to the instance
@@ -140,6 +137,9 @@ jobs:
     if: github.event.inputs.action != 'logs'
     
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -149,35 +149,45 @@ jobs:
           
       - name: Get Prefect instance IP
         run: |
-          PREFECT_IP=$(aws lightsail get-instance \
-            --instance-name kroni-survival-prefect-orchestration \
-            --query 'instance.publicIpAddress' \
-            --output text)
+          PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
       
+      # Move SSH setup BEFORE any SSH commands
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
-      # Wait for Prefect to start
+      # Add more robust container readiness check
       - name: Wait for Prefect Server
         run: |
-          echo "Waiting for Prefect server to start..."
-          sleep 30
+          # Wait for container to be ready (max 120 seconds)
+          for i in {1..24}; do
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker inspect prefect-server --format '{{.State.Status}}' | grep -q running"; then
+              # Additional check to ensure the container is truly ready
+              if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'prefect version' &>/dev/null"; then
+                echo "Prefect server is running and responsive"
+                break
+              fi
+            fi
+            echo "Waiting for Prefect server to be ready... Attempt $i/24"
+            sleep 5
+          done
       
-      # Register deployments
-      - name: Register Deployments
+      - name: Register Prefect Deployments
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
-      
-      # Set up schedules
-      - name: Setup Schedules
-        run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule backup_flow/scheduled-backup --cron '0 0 */3 * *'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule server_monitoring_flow/server-monitoring --cron '0 */4 * * *'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule snapshot_flow/snapshot-flow --cron '0 0 1 * *'"
+          # Add error handling and retries
+          for i in {1..3}; do
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && \
+              prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply && \
+              prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply && \
+              prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"; then
+              echo "Successfully registered all deployments"
+              break
+            else
+              echo "Attempt $i failed. Retrying in 5 seconds..."
+              sleep 5
+            fi
+          done
