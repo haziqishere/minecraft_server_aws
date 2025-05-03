@@ -298,6 +298,53 @@ resource "aws_lightsail_instance_public_ports" "prefect_orchestration" {
   }
 }
 
+# Create IAM user for Prefect orchestration
+resource "aws_iam_user" "prefect_orchestration" {
+  name = "kroni-prefect-orchestration-user"
+
+  tags = {
+    Name = "kroni-prefect-orchestration-user"
+  }
+}
+
+# Create IAM policy for Prefect orchestration
+resource "aws_iam_policy" "prefect_orchestration_policy" {
+  name        = "kroni-prefect-orchestration-policy"
+  description = "Policy for Prefect orchestration"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "lightsail:GetInstance",
+          "lightsail:GetInstances",
+          "lightsail:GetStaticIp",
+          "lightsail:GetStaticIps",
+          "lightsail:GetInstanceSnapshot",
+          "lightsail:GetInstanceSnapshots",
+          "s3:ListBucket",
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Attach policy to IAM user
+resource "aws_iam_user_policy_attachment" "prefect_orchestration_attachment" {
+  user       = aws_iam_user.prefect_orchestration.name
+  policy_arn = aws_iam_policy.prefect_orchestration_policy.arn
+}
+
+# Create access key for IAM user
+resource "aws_iam_access_key" "prefect_orchestration" {
+  user = aws_iam_user.prefect_orchestration.name
+}
+
 # Provision the Prefect orchestration instance
 resource "null_resource" "provision_prefect" {
   depends_on = [
@@ -320,7 +367,7 @@ resource "null_resource" "provision_prefect" {
       "sudo systemctl enable docker",
       "sudo systemctl start docker",
       "sudo usermod -aG docker ec2-user",
-      "sudo curl -L https://github.com/docker/compose/releases/download/v2.17.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose",
+      "sudo curl -L \"https://github.com/docker/compose/releases/download/v2.17.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose",
       "sudo chmod +x /usr/local/bin/docker-compose",
     ]
   }
@@ -328,31 +375,29 @@ resource "null_resource" "provision_prefect" {
   # Create directories
   provisioner "remote-exec" {
     inline = [
-      "mkdir -p opt/prefect/flows",
+      "sudo mkdir -p /opt/prefect/flows",
+      "sudo chown -R ec2-user:ec2-user /opt/prefect",
       "mkdir -p ~/.aws",
       "mkdir -p ~/.ssh"
     ]
   }
 
-  # Copy Docke Compose file
+  # Copy Docker Compose file
   provisioner "file" {
-    content = templatefile("${path.module}/docker-compose-yml.tpl", {
-      prefect_image = "haziqishere/custom-prefect:latest",
-      aws_region    = var.aws_region
-    })
+    source      = "${path.module}/../prefect/docker-compose.yaml"
     destination = "/opt/prefect/docker-compose.yml"
   }
 
   # Copy Python flows files
   provisioner "file" {
-    source      = "${path.module}/..prefect/flows" #TODO: Adjust this path to your actual flows directory
+    source      = "${path.module}/../prefect/flows" # Adjusted path to flows directory
     destination = "/opt/prefect/flows"
   }
 
   # Copy deployment script
   provisioner "file" {
-    source      = "${path.module}/prefect-deploy.sh"
-    destination = "/opt/prefect/prefect-deploy.sh"
+    source      = "${path.module}/../prefect/deploy_prefect.sh"
+    destination = "/opt/prefect/deploy_prefect.sh"
   }
 
   # Configure AWS credentials
@@ -364,8 +409,7 @@ resource "null_resource" "provision_prefect" {
       "aws_secret_access_key = ${aws_iam_access_key.prefect_orchestration.secret}",
       "region = ${var.aws_region}",
       "EOF",
-      "chmod 600 ~/.aws/credentials",
-      "chmod +x /opt/prefect/deploy_prefect.sh",
+      "chmod 600 ~/.aws/credentials"
     ]
   }
 
@@ -373,7 +417,8 @@ resource "null_resource" "provision_prefect" {
   provisioner "remote-exec" {
     inline = [
       "cd /opt/prefect",
-      "./deploy_prefect.sh",
+      "chmod +x deploy_prefect.sh",
+      "./deploy_prefect.sh deploy",
       "sleep 30", # Wait for Prefect to start
       "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_backup_flow.py'",
       "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_snapshot_flow.py'",
