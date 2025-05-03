@@ -288,7 +288,7 @@ sudo docker run -d \
   -e MEMORY=768m \
   -e ENABLE_AUTOPAUSE=TRUE \
   -e OVERRIDE_SERVER_PROPERTIES=true \
-  -e DIFFICULTY=normal \
+  -e DIFFICULTY=hard \
   -e ALLOW_NETHER=true \
   -e ENABLE_RCON=false \
   -e LEVEL_TYPE=default \

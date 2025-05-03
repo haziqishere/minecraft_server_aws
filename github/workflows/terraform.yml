@@ -29,7 +29,7 @@ permissions:
 
 env:
   TF_LOG: INFO
-  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-5' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
 
 jobs:
   terraform:
@@ -56,12 +56,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Copy scripts to terraform directory
+      - name: Set up Prefect directory
         run: |
-          mkdir -p ./scripts
-          cp ../scripts/docker-install.sh ./scripts/
-          cp ../scripts/backup-to-s3.sh ./scripts/
-          cp ../scripts/notify-discord.sh ./scripts/
+          mkdir -p ./prefect/flows
+          cp -r ../prefect/flows/* ./prefect/flows/
+          # Copy the Dockerfile and Docker Compose configs
+          cp ../prefect/Dockerfile ./prefect/
+          cp ../prefect/docker-compose.yaml ./prefect/
+          cp ../prefect/deploy_prefect.sh ./prefect/
 
       - name: Terraform Format
         id: fmt
@@ -154,3 +156,55 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: terraform output
         continue-on-error: true
+
+  build_and_push_prefect_image:
+    name: "Build and Push Prefect Image"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'apply'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          context: ./prefect
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/kroni-prefect:latest
+  
+  deploy_prefect_flows:
+    name: "Deploy Prefect Flows"
+    needs: [terraform, build_and_push_prefect_image]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'apply'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Get Prefect instance IP
+        id: prefect_ip
+        run: |
+          PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
+          echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
+          
+      - name: Deploy Prefect Flows
+        run: |
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@$PREFECT_IP "cd /opt/prefect && ./deploy_prefect.sh update"

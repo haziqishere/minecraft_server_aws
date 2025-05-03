@@ -1,4 +1,6 @@
-# Create Lightsail instance
+##################################################
+# Create Lightsail instance for Minecraft server #
+##################################################
 resource "aws_lightsail_instance" "minecraft_server" {
   name              = var.lightsail_instance_name
   availability_zone = "${var.aws_region}a"
@@ -181,6 +183,7 @@ resource "aws_iam_access_key" "minecraft_backup" {
 
 # Generate provisioner script using built-in templatefile function
 locals {
+  # Provisioner script to be executed on the Lightsail instance
   provisioner_script = templatefile("${path.module}/provisioner.sh", {
     # Original lowercase variables
     aws_region              = var.aws_region
@@ -243,4 +246,139 @@ resource "null_resource" "provision_server" {
     aws_iam_user_policy_attachment.lightsail_snapshot_attachment,
     aws_iam_user_policy_attachment.s3_backup_attachment
   ]
+}
+
+
+##################################################
+#      Create Lightsail instance for Prefect     #
+##################################################
+
+# Prefect orchestration instance
+resource "aws_lightsail_instance" "prefect_orchestration" {
+  name              = "kroni-survival-prefect-orchestration"
+  availability_zone = "${var.aws_region}a"
+  blueprint_id      = "amazon_linux_2"
+  bundle_id         = "nano_3_0"
+  key_pair_name     = var.ssh_key_name
+
+  tags = {
+    Name = "kroni-prefect-orchestration"
+  }
+}
+
+# Static IP for Prefect instance
+resource "aws_lightsail_static_ip" "prefect_orchestration" {
+  name = "kroni-prefect-static-ip"
+}
+
+# Attach static IP to Prefect instance
+resource "aws_lightsail_static_ip_attachment" "prefect_orchestration" {
+  static_ip_name = aws_lightsail_static_ip.prefect_orchestration.name
+  instance_name  = aws_lightsail_instance.prefect_orchestration.name
+}
+
+# Configure firewall rules for the Prefect instance
+resource "aws_lightsail_instance_public_ports" "prefect_orchestration" {
+  instance_name = aws_lightsail_instance.prefect_orchestration.name
+
+  # Allow Prefect UI port
+  port_info {
+    protocol  = "tcp"
+    from_port = 4200
+    to_port   = 4200
+    cidrs     = var.prefect_ui_allowed_cidrs
+  }
+
+  # Allow SSH access
+  port_info {
+    protocol  = "tcp"
+    from_port = 22
+    to_port   = 22
+    cidrs     = var.ssh_allowed_cidrs
+  }
+}
+
+# Provision the Prefect orchestration instance
+resource "null_resource" "provision_prefect" {
+  depends_on = [
+    aws_lightsail_instance.prefect_orchestration,
+    aws_lightsail_static_ip_attachment.prefect_orchestration,
+  ]
+
+  connection {
+    type        = "ssh"
+    user        = "ec2-user"
+    host        = aws_lightsail_static_ip.prefect_orchestration.ip_address
+    private_key = file("~/.ssh/${var.ssh_key_name}.pem")
+  }
+
+  # Install Docker and Docker Compose
+  provisioner "remote-exec" {
+    inline = [
+      "sudo yum update -y",
+      "sudo amazon-linux-extras install docker -y",
+      "sudo systemctl enable docker",
+      "sudo systemctl start docker",
+      "sudo usermod -aG docker ec2-user",
+      "sudo curl -L https://github.com/docker/compose/releases/download/v2.17.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose",
+      "sudo chmod +x /usr/local/bin/docker-compose",
+    ]
+  }
+
+  # Create directories
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p opt/prefect/flows",
+      "mkdir -p ~/.aws",
+      "mkdir -p ~/.ssh"
+    ]
+  }
+
+  # Copy Docke Compose file
+  provisioner "file" {
+    content = templatefile("${path.module}/docker-compose-yml.tpl", {
+      prefect_image = "haziqishere/custom-prefect:latest",
+      aws_region    = var.aws_region
+    })
+    destination = "/opt/prefect/docker-compose.yml"
+  }
+
+  # Copy Python flows files
+  provisioner "file" {
+    source      = "${path.module}/..prefect/flows" #TODO: Adjust this path to your actual flows directory
+    destination = "/opt/prefect/flows"
+  }
+
+  # Copy deployment script
+  provisioner "file" {
+    source      = "${path.module}/prefect-deploy.sh"
+    destination = "/opt/prefect/prefect-deploy.sh"
+  }
+
+  # Configure AWS credentials
+  provisioner "remote-exec" {
+    inline = [
+      "cat > ~/.aws/credentials << EOF",
+      "[default]",
+      "aws_access_key_id = ${aws_iam_access_key.prefect_orchestration.id}",
+      "aws_secret_access_key = ${aws_iam_access_key.prefect_orchestration.secret}",
+      "region = ${var.aws_region}",
+      "EOF",
+      "chmod 600 ~/.aws/credentials",
+      "chmod +x /opt/prefect/deploy_prefect.sh",
+    ]
+  }
+
+  # Deploy Prefect with Docker Compose
+  provisioner "remote-exec" {
+    inline = [
+      "cd /opt/prefect",
+      "./deploy_prefect.sh",
+      "sleep 30", # Wait for Prefect to start
+      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_backup_flow.py'",
+      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_snapshot_flow.py'",
+      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_monitoring_flow.py'",
+    ]
+  }
+
 }

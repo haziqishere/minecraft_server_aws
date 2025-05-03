@@ -1,0 +1,41 @@
+version: '3'
+
+services:
+  prefect-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prefect-server
+    restart: always
+    command: ["server"]
+    ports:
+      - "4200:4200"
+    volumes:
+      - prefect-data:/root/.prefect
+      - ./flows:/opt/prefect/flows
+      - ${HOME}/.aws:/root/.aws:ro
+    environment:
+      - PREFECT_API_URL=http://0.0.0.0:4200/api
+      - PREFECT_UI_URL=http://0.0.0.0:4200
+      - AWS_REGION=${AWS_REGION:-ap-southeast-1}
+
+  prefect-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prefect-agent
+    restart: always
+    command: ["agent"]
+    volumes:
+      - prefect-data:/root/.prefect
+      - ./flows:/opt/prefect/flows
+      - ${HOME}/.aws:/root/.aws:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
+    environment:
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - AWS_REGION=${AWS_REGION:-ap-southeast-1}
+    depends_on:
+      - prefect-server
+
+volumes:
+  prefect-data:
