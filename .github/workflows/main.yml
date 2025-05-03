@@ -83,20 +83,20 @@ jobs:
       # Prepare the Prefect instance
       - name: Prepare Instance
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
+          ssh ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
       
       # Copy files to the Prefect instance
       - name: Copy Files
         run: |
           scp ./prefect/Dockerfile ./prefect/docker-compose.yaml ec2-user@${{ env.PREFECT_IP }}:~/prefect/
           scp ./prefect/deploy_prefect.sh ec2-user@${{ env.PREFECT_IP }}:~/prefect/
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'chmod +x ~/prefect/deploy_prefect.sh'
+          ssh ec2-user@${{ env.PREFECT_IP }} 'chmod +x ~/prefect/deploy_prefect.sh'
           scp -r ./prefect/flows/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
       
       # Install Docker and Docker Compose if needed
       - name: Install Docker if needed
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} '
+          ssh ec2-user@${{ env.PREFECT_IP }} '
             if ! command -v docker &> /dev/null; then
               sudo amazon-linux-extras install docker -y
               sudo service docker start
@@ -114,19 +114,19 @@ jobs:
       - name: Execute Deployment
         run: |
           if [ "${{ github.event.inputs.action }}" == "logs" ]; then
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh logs'
+            ssh ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh logs'
           elif [ "${{ github.event.inputs.action }}" == "restart" ]; then
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
+            ssh ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
           elif [ "${{ github.event.inputs.action }}" == "update" ]; then
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh update'
+            ssh ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh update'
           else
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
+            ssh ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
           fi
       
       # Check status after deployment
       - name: Check Status
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh status'
+          ssh ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh status'
           
       # Output URL for Prefect UI
       - name: Output Prefect UI URL
@@ -158,8 +158,8 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
-          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
       # Wait for Prefect to start
@@ -171,23 +171,13 @@ jobs:
       # Register deployments
       - name: Register Deployments
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
       
       # Set up schedules
       - name: Setup Schedules
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule backup_flow/scheduled-backup --cron '0 0 */3 * *'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule server_monitoring_flow/server-monitoring --cron '0 */4 * * *'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule snapshot_flow/snapshot-flow --cron '0 0 1 * *'"
-
-  - name: Debug SSH Setup
-    run: |
-      echo "SSH Key Name: ${{ secrets.SSH_KEY_NAME }}"
-      ls -la ~/.ssh/
-      file ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
-      echo "First line of key file: $(head -n1 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem)"
-      echo "File permissions: $(stat -c '%a' ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem)"
-      # Test SSH connection with verbose output
-      ssh -v -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'echo SSH connection test'
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule backup_flow/scheduled-backup --cron '0 0 */3 * *'"
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule server_monitoring_flow/server-monitoring --cron '0 */4 * * *'"
+          ssh ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule snapshot_flow/snapshot-flow --cron '0 0 1 * *'"
