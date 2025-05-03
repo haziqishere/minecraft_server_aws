@@ -209,13 +209,27 @@ jobs:
         run: |
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
 
-      - name: Deploy Prefect Flows
-        run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -o StrictHostKeyChecking=no ec2-user@$PREFECT_IP "cd /opt/prefect && ./deploy_prefect.sh update"
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
+
+      - name: Wait for Prefect Server
+        run: |
+          # Wait for container to be ready (max 60 seconds)
+          for i in {1..12}; do
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker ps | grep prefect-server | grep -v restarting"; then
+              echo "Prefect server is running"
+              break
+            fi
+            echo "Waiting for Prefect server to be ready..."
+            sleep 5
+          done
+
+      - name: Register Prefect Deployments
+        run: |
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
