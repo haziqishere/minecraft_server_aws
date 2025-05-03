@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
     "s3_bucket": "kroni-survival-backups",
     "instance_name": "kroni-survival-server",
     "disk_name": "kroni-survival-data",
-    "region": "ap-southeast-5",
+    "region": "ap-1",
     "retention_days": 30,
     "discord_webhook_url": "",
 }
