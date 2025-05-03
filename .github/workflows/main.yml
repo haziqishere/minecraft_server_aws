@@ -76,8 +76,8 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
-          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
       # Prepare the Prefect instance

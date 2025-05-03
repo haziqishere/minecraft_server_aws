@@ -207,15 +207,15 @@ jobs:
           
       - name: Prepare Instance
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
 
       - name: Deploy Prefect Flows
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@$PREFECT_IP "cd /opt/prefect && ./deploy_prefect.sh update"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -o StrictHostKeyChecking=no ec2-user@$PREFECT_IP "cd /opt/prefect && ./deploy_prefect.sh update"
 
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
-          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
