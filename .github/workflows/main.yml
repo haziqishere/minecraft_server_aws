@@ -181,3 +181,13 @@ jobs:
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule backup_flow/scheduled-backup --cron '0 0 */3 * *'"
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule server_monitoring_flow/server-monitoring --cron '0 */4 * * *'"
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server prefect deployment set-schedule snapshot_flow/snapshot-flow --cron '0 0 1 * *'"
+
+  - name: Debug SSH Setup
+    run: |
+      echo "SSH Key Name: ${{ secrets.SSH_KEY_NAME }}"
+      ls -la ~/.ssh/
+      file ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem
+      echo "First line of key file: $(head -n1 ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem)"
+      echo "File permissions: $(stat -c '%a' ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem)"
+      # Test SSH connection with verbose output
+      ssh -v -i ~/.ssh/${{ secrets.SSH_KEY_NAME }}.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'echo SSH connection test'
