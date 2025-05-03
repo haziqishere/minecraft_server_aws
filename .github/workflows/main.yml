@@ -18,6 +18,10 @@ on:
           - update
           - restart
           - logs
+      prefect_ip:
+        description: 'IP address of the Prefect instance'
+        required: true
+        type: string
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
@@ -223,14 +227,15 @@ jobs:
           TF_VAR_ssh_key_name: ${{ secrets.SSH_KEY_NAME }}
           TF_VAR_discord_webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TF_VAR_s3_backup_bucket_name: ${{ secrets.S3_BACKUP_BUCKET_NAME }}
-          
+        
       # Now get the Prefect IP
       - name: Get Prefect instance IP
         id: prefect_ip
         run: |
           PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
-          
+      
+      # Setup SSH BEFORE any SSH commands
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
