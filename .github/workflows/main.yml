@@ -204,7 +204,7 @@ jobs:
         run: |
           # Wait for container to be ready (max 120 seconds)
           for i in {1..24}; do
-            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server curl -s http://localhost:4200/api/health | grep -q 'ok'"; then
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')\" 2>/dev/null"; then
               echo "Prefect server is running and healthy"
               break
             fi
