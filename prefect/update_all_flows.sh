@@ -3,6 +3,27 @@
 
 echo "Updating all Prefect flows..."
 
+# Check if Prefect server is healthy
+echo "Checking if Prefect server is healthy..."
+MAX_ATTEMPTS=10
+ATTEMPT=0
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    if docker exec prefect-server python -c "import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')" 2>/dev/null; then
+        echo "Prefect server is healthy"
+        break
+    fi
+    
+    ATTEMPT=$((ATTEMPT+1))
+    echo "Waiting for server to be ready... Attempt $ATTEMPT/$MAX_ATTEMPTS"
+    sleep 5
+    
+    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+        echo "Server failed to become ready. Check server logs with: docker logs prefect-server"
+        exit 1
+    fi
+done
+
 # Get list of all Python files in flows directory
 FLOW_FILES=$(find flows -maxdepth 1 -name "*.py" -type f | grep -v "__init__" | grep -v "__pycache__")
 

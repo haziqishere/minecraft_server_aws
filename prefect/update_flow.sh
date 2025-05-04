@@ -11,6 +11,27 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
+# Check if Prefect server is healthy
+echo "Checking if Prefect server is healthy..."
+MAX_ATTEMPTS=10
+ATTEMPT=0
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    if docker exec prefect-server curl -s http://localhost:4200/api/health | grep -q "ok"; then
+        echo "Prefect server is healthy"
+        break
+    fi
+    
+    ATTEMPT=$((ATTEMPT+1))
+    echo "Waiting for server to be ready... Attempt $ATTEMPT/$MAX_ATTEMPTS"
+    sleep 5
+    
+    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+        echo "Server failed to become ready. Check server logs with: docker logs prefect-server"
+        exit 1
+    fi
+done
+
 FLOW_FILE=$1
 FLOW_NAME=$(basename "$FLOW_FILE" .py)
 

@@ -140,7 +140,8 @@ case $COMMAND in
     ATTEMPT=0
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-      if docker exec prefect-server curl -s http://localhost:4200/api/health | grep -q "healthy"; then
+      # Updated health check for Prefect 3.x using python instead of curl
+      if docker exec prefect-server python -c "import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')" 2>/dev/null; then
         echo "Server is healthy, registering flows..."
         break
       fi
@@ -149,10 +150,10 @@ case $COMMAND in
       echo "Waiting for server to be ready... Attempt $ATTEMPT/$MAX_ATTEMPTS"
       sleep 5
       
-      # After 10 attempts, check the logs
-      if [ $ATTEMPT -eq 10 ]; then
-        echo "Server still not ready, checking logs:"
-        docker logs prefect-server --tail=50
+      # After 5 attempts, check the logs
+      if [ $ATTEMPT -eq 5 ]; then
+        echo "Server still starting, checking logs:"
+        docker logs prefect-server --tail=20
       fi
     done
     

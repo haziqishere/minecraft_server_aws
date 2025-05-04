@@ -5,11 +5,11 @@ services:
     image: prefecthq/prefect:3-latest
     container_name: prefect-server
     restart: on-failure
-    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    command: prefect server start --host 0.0.0.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')"]
+      interval: 15s
+      timeout: 10s
       retries: 5
       start_period: 30s
     ports:
@@ -35,9 +35,9 @@ services:
     image: prefecthq/prefect:3-latest
     container_name: prefect-worker
     restart: on-failure
-    # Don't start the worker automatically so we can configure it properly
+    # Simpler command to start the worker
     entrypoint: /bin/bash
-    command: ["-c", "sleep 10 && prefect work-pool create default -t process || echo 'Work pool already exists' && prefect worker start --pool default"]
+    command: -c "prefect work-pool create default -t process || echo 'Work pool already exists' && prefect worker start --pool default"
     volumes:
       - prefect-data:/root/.prefect
       - ./flows:/opt/prefect/flows
