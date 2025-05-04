@@ -6,7 +6,7 @@ This directory contains Prefect flows and deployment configurations for automati
 
 The Prefect setup consists of:
 
-- **prefect-server**: Runs the Prefect UI and API
+- **prefect-server**: Runs the Prefect UI and API (using official Prefect 3.x image)
 - **prefect-worker**: Executes the scheduled flows
 - **flows/**: Python scripts containing the flow definitions
 - **helper scripts**: To make deployment and updates easier
@@ -44,7 +44,7 @@ You can update flow files without rebuilding the Docker image:
 ./deploy_prefect.sh update-flows
 
 # Update a specific flow
-./deploy_prefect.sh update-flows latest backup_flow.py
+./deploy_prefect.sh update-flows backup_flow.py
 ```
 
 **Option 2: Using the dedicated helper scripts:**
@@ -78,9 +78,6 @@ You can also manually trigger the workflow in the GitHub Actions UI and specify 
 
 # Restart services
 ./deploy_prefect.sh restart
-
-# Update to a new image version
-./deploy_prefect.sh update latest
 ```
 
 ## Prefect UI
@@ -92,6 +89,15 @@ The Prefect UI is available at:
 ## Configuration
 
 The Prefect server and worker configuration is defined in:
-- `docker-compose.yaml`: Container configuration
+- `docker-compose.yaml`: Container configuration using official Prefect image
 - `prefect.yaml`: Deployment configuration
-- `.prefect/flows`: Flow registration and metadata 
+- Flow scripts with `@flow` decorated functions
+
+## Troubleshooting
+
+If you encounter flow deployment issues, check:
+
+1. **Flow Function Names**: Make sure your flow files have functions decorated with `@flow` that match the deployment configuration
+2. **Worker Status**: Ensure a worker is running with `docker ps | grep prefect-worker`
+3. **Server Logs**: Check server logs with `./deploy_prefect.sh logs server`
+4. **Worker Logs**: Check worker logs with `./deploy_prefect.sh logs worker` 

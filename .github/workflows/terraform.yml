@@ -218,18 +218,61 @@ jobs:
 
       - name: Wait for Prefect Server
         run: |
-          # Wait for container to be ready (max 60 seconds)
-          for i in {1..12}; do
-            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker ps | grep prefect-server | grep -v restarting"; then
-              echo "Prefect server is running"
+          # Wait for container to be ready (max 120 seconds)
+          for i in {1..24}; do
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server curl -s http://localhost:4200/api/health | grep -q 'ok'"; then
+              echo "Prefect server is running and healthy"
               break
             fi
-            echo "Waiting for Prefect server to be ready..."
+            
+            echo "Waiting for Prefect server to be ready... Attempt $i/24"
+            
+            # Show logs after 5 attempts
+            if [ $i -eq 5 ]; then
+              echo "Server still starting up, checking logs:"
+              ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker logs prefect-server --tail=20"
+            fi
+            
             sleep 5
           done
 
       - name: Register Prefect Deployments
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
+          # Create work pool if needed
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
+          "
+          
+          # Register each flow
+          for flow_file in prefect/flows/*.py; do
+            if [[ "$flow_file" != *"__init__.py"* && "$flow_file" != *"__pycache__"* ]]; then
+              flow_name=$(basename "$flow_file")
+              
+              # Copy the flow file to the server
+              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} "$flow_file" ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
+              
+              # Find flow functions in the file
+              flow_funcs=$(grep -o "@flow.*def \w\+" "$flow_file" | awk '{print $NF}')
+              
+              if [ -z "$flow_funcs" ]; then
+                echo "Warning: No flow functions found in $flow_name, skipping..."
+                continue
+              fi
+              
+              # Deploy each flow function
+              for flow_func in $flow_funcs; do
+                echo "Deploying $flow_name:$flow_func"
+                ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+                  docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy $flow_name:$flow_func -n $flow_func-deployment --pool default'
+                "
+              done
+            fi
+          done
+          
+          # Start worker if needed
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if ! docker ps | grep -q prefect-worker; then
+              echo \"Starting worker...\"
+              docker-compose up -d prefect-worker
+            fi
+          "
