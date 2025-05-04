@@ -44,7 +44,7 @@ def download_backup(minecraft_host: str, remote_backup_path: str) -> str:
                 raise Exception(f"Failed to download backup file from {remote_backup_path}")
         return None
 
-@taks(name="Upload Backup to S3")
+@task(name="Upload Backup to S3")
 def upload_backup_to_s3(backup_path: str, bucket_name: str, region: str) -> bool:
     """ Upload the backup file to S3 """
     if not backup_path:
@@ -66,7 +66,7 @@ def upload_backup_to_s3(backup_path: str, bucket_name: str, region: str) -> bool
 @task(name="Clean Up Remote Backup")
 def cleanup_remote_backup(minecraft_host: str, remote_backup_path: str) -> bool:
     """ Remove the backup file from the Minecraft server"""
-    with RemoteExecutor(hostname=mincecraft_host) as executor:
+    with RemoteExecutor(hostname=minecraft_host) as executor:
         return executor.remove_file(remote_backup_path)
     
 @task(name="Send Discord Notificaiton")
@@ -150,7 +150,7 @@ def backup_flow(config: dict=None):
         # Upload the backup file to S3
         s3_success = False
         if local_backup_path:
-            s3_success = upload_backup_to_s3(local_backup_path, cfg("s3_bucket"), cfg["region"])
+            s3_success = upload_backup_to_s3(local_backup_path, cfg["s3_bucket"], cfg["region"])
 
             # Clean up the remote backup file
             cleanup_remote_backup(cfg["minecraft_host"], remote_backup_path)
@@ -158,7 +158,7 @@ def backup_flow(config: dict=None):
         # Determine status and message
         if backup_created and local_backup_path and s3_success:
             status = "SUCCESS"
-            message = f"Minecraft world backup completed successfully! Backup stored in s3://{cfg["s3_bucket"]}/{os.path.basename(local_backup_path)}"
+            message = f"Minecraft world backup completed successfully! Backup stored in s3://{cfg['s3_bucket']}/{os.path.basename(local_backup_path)}"
         else:
             status = "FAILURE"
             message = "Minecraft world backup failed."

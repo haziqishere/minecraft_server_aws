@@ -258,7 +258,7 @@ resource "aws_lightsail_instance" "prefect_orchestration" {
   name              = "kroni-survival-prefect-orchestration"
   availability_zone = "${var.aws_region}a"
   blueprint_id      = "amazon_linux_2"
-  bundle_id         = "nano_3_0"
+  bundle_id         = "micro_3_0"
   key_pair_name     = var.ssh_key_name
 
   tags = {
@@ -388,10 +388,37 @@ resource "null_resource" "provision_prefect" {
     destination = "/opt/prefect/docker-compose.yml"
   }
 
-  # Copy Python flows files
+  # Copy Dockerfile
   provisioner "file" {
-    source      = "${path.module}/../prefect/flows" # Adjusted path to flows directory
-    destination = "/opt/prefect/flows"
+    source      = "${path.module}/../prefect/Dockerfile"
+    destination = "/opt/prefect/Dockerfile"
+  }
+
+  # Copy Python flow files individually for reliability and modularity
+  provisioner "file" {
+    source      = "${path.module}/../prefect/flows/backup_flow.py"
+    destination = "/opt/prefect/flows/backup_flow.py"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/../prefect/flows/snapshot_flow.py"
+    destination = "/opt/prefect/flows/snapshot_flow.py"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/../prefect/flows/server_monitoring_flow.py"
+    destination = "/opt/prefect/flows/server_monitoring_flow.py"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/../prefect/flows/remote_executor.py"
+    destination = "/opt/prefect/flows/remote_executor.py"
+  }
+
+  # Copy the standalone flow template
+  provisioner "file" {
+    source      = "${path.module}/../prefect/flows/standalone_flow.py"
+    destination = "/opt/prefect/flows/standalone_flow.py"
   }
 
   # Copy deployment script
@@ -399,6 +426,7 @@ resource "null_resource" "provision_prefect" {
     source      = "${path.module}/../prefect/deploy_prefect.sh"
     destination = "/opt/prefect/deploy_prefect.sh"
   }
+
 
   # Configure AWS credentials
   provisioner "remote-exec" {
@@ -418,12 +446,115 @@ resource "null_resource" "provision_prefect" {
     inline = [
       "cd /opt/prefect",
       "chmod +x deploy_prefect.sh",
+      
+      # Clear any previous deployment
+      "./deploy_prefect.sh update || true",
+      
+      # Fix any permissions issues that might prevent proper startup
+      "sudo mkdir -p /opt/prefect-data && sudo chmod 777 /opt/prefect-data",
+      
+      # Start the services
       "./deploy_prefect.sh deploy",
-      "sleep 30", # Wait for Prefect to start
-      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_backup_flow.py'",
-      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_snapshot_flow.py'",
-      "docker exec prefect-agent bash -c 'cd /opt/prefect/flows && python deploy_monitoring_flow.py'",
+      
+      # Wait a bit for the containers to start
+      "sleep 10",
+      
+      # Check the container status
+      "docker ps -a",
+      
+      # Print logs to diagnose any startup issues
+      "echo 'Server Logs:' && docker logs prefect-server || true",
+      "echo 'Worker Logs:' && docker logs prefect-worker || true",
+      
+      # Check container health
+      "docker inspect --format='{{.State.Health.Status}}' prefect-server || echo 'Health check not available'",
+      
+      # Stop and restart if server not healthy
+      "if [[ $(docker inspect --format='{{.State.Status}}' prefect-server) == 'restarting' ]]; then",
+      "  echo 'Server is restarting, attempting fix...'",
+      "  docker stop prefect-server prefect-worker || true",
+      "  docker rm prefect-server prefect-worker || true", 
+      "  PREFECT_SERVER_DB_CMD=\"sqlite:////opt/prefect-data/prefect.db\"",
+      "  PREFECT_LOGGING=\"DEBUG\"",
+      "  docker-compose -f docker-compose.yml up -d --build",
+      "  sleep 30",
+      "fi",
+      
+      # Check logs again if restarted
+      "echo 'Updated Server Logs:' && docker logs prefect-server || true",
+      
+      # Create the registration script
+      "cat > /opt/prefect/register_flows.py << 'EOF'",
+      "#!/usr/bin/env python3",
+      "import os",
+      "import subprocess",
+      "import time",
+      "",
+      "def wait_for_server():",
+      "    # Wait for Prefect server to be ready",
+      "    max_attempts = 10",
+      "    for i in range(max_attempts):",
+      "        try:",
+      "            result = subprocess.run('curl -s http://prefect-server:4200/api/health', shell=True, capture_output=True, text=True)",
+      "            if result.returncode == 0 and 'healthy' in result.stdout:",
+      "                print(f'Prefect server is healthy! {result.stdout}')",
+      "                return True",
+      "            else:",
+      "                print(f'Waiting for Prefect server... Attempt {i+1}/{max_attempts}')",
+      "        except Exception as e:",
+      "            print(f'Error checking server: {e}')",
+      "        time.sleep(10)",
+      "    return False",
+      "",
+      "def register_flows():",
+      "    if not wait_for_server():",
+      "        print('Server not available, will fall back to standalone mode')",
+      "        return False",
+      "",
+      "    flows_dir = '/opt/prefect/flows'",
+      "    flow_files = [f for f in os.listdir(flows_dir) if f.endswith('.py') and not f.startswith('__')]",
+      "",
+      "    print(f'Found {len(flow_files)} flow files to register')",
+      "    ",
+      "    for flow_file in flow_files:",
+      "        try:",
+      "            # Create a simple deployment directly from the flow file",
+      "            cmd = f'cd {flows_dir} && python -c \"from prefect.deployments import Deployment; from {flow_file[:-3]} import * ; Deployment.build_from_flow(flow=list(filter(lambda x: hasattr(x, \\'flow_run_context\\'), locals().values()))[0], name=\\\"{flow_file[:-3]}-deployment\\\", version=\\\"1\\\", work_queue_name=\\\"default\\\").apply()\" || echo \"Failed to register {flow_file} but continuing\"'",
+      "            print(f'Registering {flow_file}...')",
+      "            print(f'Command: {cmd}')",
+      "            subprocess.run(cmd, shell=True)",
+      "        except Exception as e:",
+      "            print(f'Error registering {flow_file}: {e}')",
+      "",
+      "    return True",
+      "",
+      "if __name__ == '__main__':",
+      "    register_flows()",
+      "EOF",
+      
+      # Make the registration script executable
+      "chmod +x /opt/prefect/register_flows.py",
+      
+      # Copy flow files to the container
+      "docker cp /opt/prefect/flows/. prefect-worker:/opt/prefect/flows/ || true",
+      
+      # Copy the registration script to the worker container
+      "docker cp /opt/prefect/register_flows.py prefect-worker:/opt/prefect/register_flows.py || true",
+      
+      # Make the flow files executable
+      "docker exec prefect-worker chmod +x /opt/prefect/flows/*.py || true",
+      
+      # If Prefect server is failing, run the standalone flow 
+      "if [[ $(docker inspect --format='{{.State.Status}}' prefect-server) == 'restarting' ]]; then",
+      "  echo 'Server still not stable, using standalone flow'",
+      "  docker exec -e PREFECT_API_URL=\"\" prefect-worker bash -c 'cd /opt/prefect/flows && python standalone_flow.py || echo \"Failed to run standalone flow\"'",
+      "else",
+      <<-EOT
+      # Run the registration script only if server is healthy
+      docker exec prefect-worker python /opt/prefect/register_flows.py || echo "Registration failed"
+      EOT
+      ,
+      "fi"
     ]
   }
-
 }

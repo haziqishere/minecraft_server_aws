@@ -47,6 +47,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: ./prefect
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/custom-prefect:latest
 
@@ -133,11 +134,11 @@ jobs:
           if [ "${{ github.event.inputs.action }}" == "logs" ]; then
             ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh logs'
           elif [ "${{ github.event.inputs.action }}" == "restart" ]; then
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
+            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} ./deploy_prefect.sh restart'
           elif [ "${{ github.event.inputs.action }}" == "update" ]; then
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh update'
+            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} ./deploy_prefect.sh update'
           else
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh deploy'
+            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} ./deploy_prefect.sh deploy'
           fi
       
       # Check status after deployment
@@ -218,10 +219,7 @@ jobs:
         run: |
           # Add error handling and retries
           for i in {1..3}; do
-            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && \
-              prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply && \
-              prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply && \
-              prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"; then
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "cd ~/prefect && DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} ./deploy_prefect.sh register"; then
               echo "Successfully registered all deployments"
               break
             else
