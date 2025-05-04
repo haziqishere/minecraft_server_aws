@@ -17,24 +17,52 @@ echo "Ensuring work pool exists..."
 docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Work pool already exists'"
 
 # Process each flow file
+TOTAL_FLOWS=0
+SUCCESS_FLOWS=0
+
 for FLOW_FILE in $FLOW_FILES; do
-    FLOW_NAME=$(basename "$FLOW_FILE" .py)
-    FLOW_FILE_NAME=$(basename "$FLOW_FILE")
+    FLOW_NAME=$(basename "$FLOW_FILE")
     
     echo "-------------------------------------------"
-    echo "Processing flow: $FLOW_NAME from $FLOW_FILE_NAME"
+    echo "Processing file: $FLOW_NAME"
+    
+    # Find flow functions in the file
+    FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+    
+    if [ -z "$FLOW_FUNCS" ]; then
+        echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
+        continue
+    fi
+    
+    echo "Found flow functions: $FLOW_FUNCS"
     
     # Copy file to container
     echo "Copying flow file to server container..."
-    docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_FILE_NAME
+    docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
     
-    # Deploy the flow
-    echo "Deploying flow..."
-    docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_FILE_NAME:$FLOW_NAME -n $FLOW_NAME-deployment --pool default"
-    
-    echo "Flow $FLOW_NAME updated successfully!"
+    # Deploy each flow function
+    for FLOW_FUNC in $FLOW_FUNCS; do
+        TOTAL_FLOWS=$((TOTAL_FLOWS + 1))
+        
+        echo "Deploying flow: $FLOW_FUNC from $FLOW_NAME"
+        if docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"; then
+            echo "Flow $FLOW_FUNC deployed successfully!"
+            SUCCESS_FLOWS=$((SUCCESS_FLOWS + 1))
+        else
+            echo "ERROR: Failed to deploy $FLOW_FUNC!"
+        fi
+    done
 done
 
 echo "-------------------------------------------"
-echo "All flows updated successfully!"
+echo "Flow deployment complete: $SUCCESS_FLOWS/$TOTAL_FLOWS flows deployed successfully."
+
+# Check if worker is running
+if ! docker ps | grep -q "prefect-worker"; then
+    echo "Worker is not running. Starting worker..."
+    docker-compose up -d prefect-worker
+else
+    echo "Worker is already running."
+fi
+
 echo "Check the Prefect UI at http://localhost:4200 to view your deployments." 

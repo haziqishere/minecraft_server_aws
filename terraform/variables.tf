@@ -122,7 +122,7 @@ variable "discord_rate_limit" {
 variable "prefect_docker_image" {
   description = "Docker image to use for Prefect"
   type        = string
-  default     = "haziqishere/custom-prefect:latest"
+  default     = "haziqishere/prefecthq/prefect:3-latest"
 }
 
 variable "monitoring_interval" {

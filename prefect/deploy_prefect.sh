@@ -1,27 +1,23 @@
 #!/bin/bash
 # deploy_prefect.sh
 
-# Usage: ./deploy_prefect.sh [command] [image_tag]
+# Usage: ./deploy_prefect.sh [command] [flow_name]
 # Commands:
 #   deploy - Deploy Prefect using Docker Compose
 #   status - Check status of Prefect services
 #   logs   - View logs of Prefect services
-#   update - Update Prefect images and restart services
 #   update-flows - Update flow files without rebuilding container
 #   register - Register all flows with Prefect
 # Options:
-#   image_tag - Docker image tag to use (default: latest)
 #   flow_name - (For update-flows) Specific flow file to update, e.g., backup_flow.py
 
 COMMAND=${1:-status}
-IMAGE_TAG=${2:-latest}
-FLOW_NAME=${3:-""}
+FLOW_NAME=${2:-""}
 
-# Set Docker image with username from environment or default
-DOCKER_USERNAME=${DOCKER_USERNAME:-haziqishere}
-export DOCKER_IMAGE="${DOCKER_USERNAME}/custom-prefect:${IMAGE_TAG}"
+# Prefect now uses the official image
+export PREFECT_IMAGE="prefecthq/prefect:3-latest"
 
-echo "Using Docker image: ${DOCKER_IMAGE}"
+echo "Using Prefect image: ${PREFECT_IMAGE}"
 
 case $COMMAND in
   deploy)
@@ -46,33 +42,13 @@ case $COMMAND in
 
   logs)
     echo "Viewing Prefect logs..."
-    if [ "$3" == "server" ]; then
+    if [ "$2" == "server" ]; then
       docker-compose logs -f prefect-server
-    elif [ "$3" == "worker" ]; then
+    elif [ "$2" == "worker" ]; then
       docker-compose logs -f prefect-worker
     else
       docker-compose logs -f
     fi
-    ;;
-    
-  update)
-    echo "Updating Prefect services to version ${IMAGE_TAG}..."
-    # Pull the latest image
-    docker pull ${DOCKER_IMAGE}
-    
-    # Stop and remove containers
-    docker-compose down --remove-orphans
-    
-    # Start with new image
-    docker-compose up -d
-    
-    # Show running containers
-    echo "Containers started:"
-    docker-compose ps
-    
-    # Show logs to verify startup
-    echo "Server logs:"
-    docker-compose logs --tail=20 prefect-server
     ;;
     
   restart)
@@ -91,11 +67,30 @@ case $COMMAND in
         FLOW_BASE=$(basename "$FLOW_NAME" .py)
         echo "Updating flow: $FLOW_BASE"
         
+        # Check if the flow file contains the specified flow function
+        if ! grep -q "@flow.*def $FLOW_BASE" "$FLOW_FILE"; then
+          echo "Warning: File $FLOW_FILE might not contain a flow function named '$FLOW_BASE'"
+          echo "Looking for any flow function in the file..."
+          FLOW_FUNC=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | head -1 | awk '{print $NF}')
+          
+          if [ -n "$FLOW_FUNC" ]; then
+            echo "Found flow function: $FLOW_FUNC"
+            FLOW_BASE=$FLOW_FUNC
+          else
+            echo "Error: No flow function found in $FLOW_FILE!"
+            exit 1
+          fi
+        fi
+        
         # Copy flow file to the container
-        docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
+        echo "Copying $FLOW_FILE to prefect-server:/opt/prefect/flows/$FLOW_NAME"
+        docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
         
         # Register the flow
-        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect work-pool create default -t process || echo 'Pool already exists'"
+        echo "Creating work pool if it doesn't exist..."
+        docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Pool already exists'"
+        
+        echo "Deploying flow $FLOW_NAME:$FLOW_BASE..."
         docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
         
         echo "Flow $FLOW_BASE updated successfully!"
@@ -114,11 +109,23 @@ case $COMMAND in
       for FLOW_FILE in flows/*.py; do
         if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
           FLOW_NAME=$(basename "$FLOW_FILE")
-          FLOW_BASE=$(basename "$FLOW_FILE" .py)
           
-          echo "Updating flow: $FLOW_BASE"
-          docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
-          docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+          # Check for flow functions in the file
+          FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+          
+          if [ -z "$FLOW_FUNCS" ]; then
+            echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
+            continue
+          fi
+          
+          echo "Copying $FLOW_FILE to container..."
+          docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
+          
+          # Deploy each flow function found in the file
+          for FLOW_FUNC in $FLOW_FUNCS; do
+            echo "Deploying flow: $FLOW_NAME:$FLOW_FUNC"
+            docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
+          done
         fi
       done
       
@@ -129,7 +136,7 @@ case $COMMAND in
   register)
     echo "Registering flows with Prefect..."
     # Wait for server to be ready
-    MAX_ATTEMPTS=10
+    MAX_ATTEMPTS=20
     ATTEMPT=0
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
@@ -141,28 +148,60 @@ case $COMMAND in
       ATTEMPT=$((ATTEMPT+1))
       echo "Waiting for server to be ready... Attempt $ATTEMPT/$MAX_ATTEMPTS"
       sleep 5
+      
+      # After 10 attempts, check the logs
+      if [ $ATTEMPT -eq 10 ]; then
+        echo "Server still not ready, checking logs:"
+        docker logs prefect-server --tail=50
+      fi
     done
+    
+    if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
+      echo "Server failed to become ready after $MAX_ATTEMPTS attempts."
+      exit 1
+    fi
     
     # Create work pool if it doesn't exist
     docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Pool already exists'"
     
-    # Register all flows
+    # Register all flows with proper flow detection
     echo "Registering all flows..."
     for FLOW_FILE in flows/*.py; do
       if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
         FLOW_NAME=$(basename "$FLOW_FILE")
-        FLOW_BASE=$(basename "$FLOW_FILE" .py)
         
-        echo "Deploying flow: $FLOW_BASE"
-        docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
-        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+        # Check for flow functions in the file
+        FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+        
+        if [ -z "$FLOW_FUNCS" ]; then
+          echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
+          continue
+        fi
+        
+        echo "Copying $FLOW_FILE to container..."
+        docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
+        
+        # Deploy each flow function found in the file
+        for FLOW_FUNC in $FLOW_FUNCS; do
+          echo "Deploying flow: $FLOW_NAME:$FLOW_FUNC"
+          docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
+        done
       fi
     done
+    
+    # Start worker if not already running
+    echo "Starting worker if not already running..."
+    if ! docker ps | grep -q prefect-worker; then
+      echo "Worker not running, starting it..."
+      docker-compose up -d prefect-worker
+    else
+      echo "Worker is already running."
+    fi
     ;;
     
   *)
     echo "Unknown command: $COMMAND"
-    echo "Usage: $0 [deploy|status|logs|update|restart|update-flows|register] [image_tag] [flow_name]"
+    echo "Usage: $0 [deploy|status|logs|restart|update-flows|register] [flow_name]"
     exit 1
     ;;
 esac

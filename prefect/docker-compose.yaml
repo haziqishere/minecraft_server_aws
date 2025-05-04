@@ -2,10 +2,10 @@ version: '3'
 
 services:
   prefect-server:
-    image: ${DOCKER_IMAGE:-haziqishere/custom-prefect:latest}
+    image: prefecthq/prefect:3-latest
     container_name: prefect-server
     restart: on-failure
-    command: ["server"]
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
       interval: 10s
@@ -24,7 +24,7 @@ services:
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
       - PREFECT_LOGGING_LEVEL=DEBUG
       - PREFECT_HOME=/root/.prefect
-      # Fix permissions for volume
+      # Use aiosqlite for async support
       - PREFECT_SERVER_DATABASE_CONNECTION_URL=sqlite+aiosqlite:////root/.prefect/prefect.db
     networks:
       prefect-network:
@@ -32,10 +32,12 @@ services:
         ipv4_address: 172.28.0.2
 
   prefect-worker:
-    image: ${DOCKER_IMAGE:-haziqishere/custom-prefect:latest}
+    image: prefecthq/prefect:3-latest
     container_name: prefect-worker
     restart: on-failure
-    command: ["worker"]
+    # Don't start the worker automatically so we can configure it properly
+    entrypoint: /bin/bash
+    command: ["-c", "sleep 10 && prefect work-pool create default -t process || echo 'Work pool already exists' && prefect worker start --pool default"]
     volumes:
       - prefect-data:/root/.prefect
       - ./flows:/opt/prefect/flows
@@ -45,17 +47,11 @@ services:
       # Use the IP address instead of hostname
       - PREFECT_API_URL=http://172.28.0.2:4200/api
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
-      # Add extra hosts entry to handle hostname resolution
-      - PREFECT_EXTRA_ENTRYPOINT_COMMANDS=echo "172.28.0.2 prefect-server" >> /etc/hosts
       # Add extra logging to help debug
       - PREFECT_LOGGING_LEVEL=DEBUG
       - PREFECT_HOME=/root/.prefect
-      # Wait for server to be healthy before starting the worker
-      - PREFECT_CLIENT_MAX_RETRIES=20
-      - PREFECT_CLIENT_RETRY_DELAY=5.0
-    depends_on:
-      prefect-server:
-        condition: service_healthy
+      # Make sure server is healthy before starting
+      - PREFECT_CLIENT_MAX_RETRIES=10
     networks:
       prefect-network:
         # Assign a static IP to the worker
@@ -63,6 +59,9 @@ services:
     # Add extra hosts mapping to resolve hostname issues
     extra_hosts:
       - "prefect-server:172.28.0.2"
+    depends_on:
+      prefect-server:
+        condition: service_healthy
 
 volumes:
   prefect-data:
