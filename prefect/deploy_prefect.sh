@@ -39,7 +39,7 @@ case $COMMAND in
     docker-compose ps
     docker ps -a | grep prefect
     ;;
-    
+
   logs)
     echo "Viewing Prefect logs..."
     if [ "$3" == "server" ]; then
@@ -95,9 +95,9 @@ case $COMMAND in
     
     # Register flows
     docker exec prefect-server bash -c 'cd /opt/prefect/flows && \
-      prefect deployment build backup_flow.py:backup_flow -n scheduled-backup -q default --apply && \
-      prefect deployment build server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply && \
-      prefect deployment build snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'
+      prefect deployment create backup_flow.py:backup_flow -n scheduled-backup -q default && \
+      prefect deployment create server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default && \
+      prefect deployment create snapshot_flow.py:snapshot_flow -n snapshot-flow -q default'
     ;;
     
   *)
