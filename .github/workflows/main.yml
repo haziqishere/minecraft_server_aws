@@ -48,7 +48,7 @@ jobs:
         with:
           context: ./prefect
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/kroni-prefect:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/custom-prefect:latest
 
   deploy:
     name: "Deploy to Prefect Instance"
