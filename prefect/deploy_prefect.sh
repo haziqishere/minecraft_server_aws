@@ -95,9 +95,9 @@ case $COMMAND in
     
     # Register flows
     docker exec prefect-server bash -c 'cd /opt/prefect/flows && \
-      prefect deployment create backup_flow.py:backup_flow -n scheduled-backup -q default && \
-      prefect deployment create server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default && \
-      prefect deployment create snapshot_flow.py:snapshot_flow -n snapshot-flow -q default'
+      prefect deployment run backup_flow.py:backup_flow -n scheduled-backup -q default && \
+      prefect deployment run server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default && \
+      prefect deployment run snapshot_flow.py:snapshot_flow -n snapshot-flow -q default'
     ;;
     
   *)

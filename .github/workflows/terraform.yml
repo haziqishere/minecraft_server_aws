@@ -230,6 +230,6 @@ jobs:
 
       - name: Register Prefect Deployments
         run: |
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment create backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment create server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment create snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run backup_flow.py:backup_flow -n scheduled-backup -q default --apply'"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default --apply'"
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deployment run snapshot_flow.py:snapshot_flow -n snapshot-flow -q default --apply'"
