@@ -2,12 +2,16 @@ version: '3'
 
 services:
   prefect-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE:-haziqishere/custom-prefect:latest}
     container_name: prefect-server
-    restart: always
+    restart: on-failure
     command: ["server"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     ports:
       - "4200:4200"
     volumes:
@@ -18,24 +22,55 @@ services:
       - PREFECT_API_URL=http://0.0.0.0:4200/api
       - PREFECT_UI_URL=http://0.0.0.0:4200
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
+      - PREFECT_LOGGING_LEVEL=DEBUG
+      - PREFECT_HOME=/root/.prefect
+      # Fix permissions for volume
+      - PREFECT_SERVER_DATABASE_CONNECTION_URL=sqlite+aiosqlite:////root/.prefect/prefect.db
+    networks:
+      prefect-network:
+        # Assign a static IP to the server
+        ipv4_address: 172.28.0.2
 
-  prefect-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: prefect-agent
-    restart: always
-    command: ["agent"]
+  prefect-worker:
+    image: ${DOCKER_IMAGE:-haziqishere/custom-prefect:latest}
+    container_name: prefect-worker
+    restart: on-failure
+    command: ["worker"]
     volumes:
       - prefect-data:/root/.prefect
       - ./flows:/opt/prefect/flows
       - ${HOME}/.aws:/root/.aws:ro
       - ${HOME}/.ssh:/root/.ssh:ro
     environment:
-      - PREFECT_API_URL=http://prefect-server:4200/api
+      # Use the IP address instead of hostname
+      - PREFECT_API_URL=http://172.28.0.2:4200/api
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
+      # Add extra hosts entry to handle hostname resolution
+      - PREFECT_EXTRA_ENTRYPOINT_COMMANDS=echo "172.28.0.2 prefect-server" >> /etc/hosts
+      # Add extra logging to help debug
+      - PREFECT_LOGGING_LEVEL=DEBUG
+      - PREFECT_HOME=/root/.prefect
+      # Wait for server to be healthy before starting the worker
+      - PREFECT_CLIENT_MAX_RETRIES=20
+      - PREFECT_CLIENT_RETRY_DELAY=5.0
     depends_on:
-      - prefect-server
+      prefect-server:
+        condition: service_healthy
+    networks:
+      prefect-network:
+        # Assign a static IP to the worker
+        ipv4_address: 172.28.0.3
+    # Add extra hosts mapping to resolve hostname issues
+    extra_hosts:
+      - "prefect-server:172.28.0.2"
 
 volumes:
   prefect-data:
+    driver: local
+
+networks:
+  prefect-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

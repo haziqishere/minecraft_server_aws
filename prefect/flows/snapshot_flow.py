@@ -109,7 +109,7 @@ def create_world_backup(world_path: str) -> Optional[str]:
             return None
         
         subprocess.run(
-            ["tar", "-czf", str(backup_path), "-C", str(world_dir.paren), world_dir.name],
+            ["tar", "-czf", str(backup_path), "-C", str(world_dir.parent), world_dir.name],
             check=True,
         )
 
@@ -173,7 +173,7 @@ def create_lightsail_snapshots(
         logger.info(f"Creating disk snapshot: {disk_snapshot_name}")
         lightsail_client.create_disk_snapshot(
             diskName=disk_name,
-            diskSnapshotame=disk_snapshot_name
+            diskSnapshotName=disk_snapshot_name
         )
         logger.info("Snapshot created successfully")
         return True, instance_snapshot_name, disk_snapshot_name
