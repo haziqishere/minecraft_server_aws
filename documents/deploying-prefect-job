@@ -1,0 +1,97 @@
+below is output for deployment:
+
+[ec2-user@ip-172-26-13-191 flows]$ docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo "Pool already exists"'
+13:09:37.113 | DEBUG   | prefect.profiles - Using profile 'ephemeral'
+13:09:39.017 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:09:39.105 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+Created work pool 'default'!
+
+To start a worker for this work pool, run:
+
+        prefect worker start --pool default
+
+└── UUID: c1900de4-b2c0-4d81-8460-f140e0bc492c
+└── Type: process
+└── Description: None
+└── Status: Not ready
+└── URL: http://0.0.0.0:4200/work-pools/work-pool/default
+
+[ec2-user@ip-172-26-13-191 flows]$ docker exec prefect-server bash -c 'prefect worker start --pool default'
+13:11:18.714 | DEBUG   | prefect.profiles - Using profile 'ephemeral'
+13:11:19.854 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:11:19.905 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:11:19.959 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+Discovered type 'process' for work pool 'default'.
+13:11:19.978 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Entering worker context...
+13:11:19.978 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Setting up worker...
+13:11:20.067 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:11:20.106 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Worker synchronized with the Prefect API server.
+13:11:20.169 | DEBUG   | prefect.runner - Starting runner...
+13:11:20.204 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:11:20.225 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Worker synchronized with the Prefect API server.
+Worker 'ProcessWorker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142' started!
+13:11:20.231 | DEBUG   | prefect.utilities.services.critical_service_loop - Starting run of 'get_and_submit_flow_runs'
+13:11:20.236 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Querying for flow runs scheduled before 2025-05-04 13:11:30.231834+00:00
+13:11:20.238 | DEBUG   | prefect.utilities.services.critical_service_loop - Starting run of 'sync_with_backend'
+13:11:20.290 | DEBUG   | prefect.events.clients - Reconnecting websocket connection.
+13:11:20.291 | DEBUG   | prefect.events.clients - Opening websocket connection.
+13:11:20.295 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Discovered 0 scheduled_flow_runs
+13:11:20.299 | DEBUG   | prefect.events.clients - Pinging to ensure websocket connected.
+13:11:20.303 | DEBUG   | prefect.workers.process.processworker 971938d9-1ce6-4794-a9ee-bd1f1a7bd142 - Worker synchronized with the Prefect API server.
+13:11:20.304 | DEBUG   | prefect.events.clients - Pong received. Websocket connected.
+13:11:20.305 | DEBUG   | prefect.events.clients - Resending 0 unconfirmed events.
+13:11:20.306 | DEBUG   | prefect.events.clients - Finished resending unconfirmed events.
+13:11:20.307 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:11:20.308 | DEBUG   | prefect.events.clients - EventsClient(id=139984150319200): Emitting event id=1ed124f7-8048-4a21-87ab-f53f494cc953.
+13:11:20.309 | DEBUG   | prefect.events.clients - Added event id=1ed124f7-8048-4a21-87ab-f53f494cc953 to unconfirmed events list. There are now 1 unconfirmed events.
+13:11:20.310 | DEBUG   | prefect.events.clients - EventsClient(id=139984150319200): Emit reconnection attempt 0.
+13:11:20.311 | DEBUG   | prefect.events.clients - EventsClient(id=139984150319200): Sending event id=1ed124f7-8048-4a21-87ab-f53f494cc953.
+
+[ec2-user@ip-172-26-13-191 flows]$ docker exec prefect-server bash -c 'prefect work-pool ls'
+13:15:20.131 | DEBUG   | prefect.profiles - Using profile 'ephemeral'
+13:15:21.320 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+                                   Work Pools
+┏━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┓
+┃ Name    ┃ Type    ┃                                   ID ┃ Concurrency Limit ┃
+┡━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━┩
+│ default │ process │ c1900de4-b2c0-4d81-8460-f140e0bc492c │ None              │
+└─────────┴─────────┴──────────────────────────────────────┴───────────────────┘
+                           (**) denotes a paused pool
+
+[ec2-user@ip-172-26-13-191 flows]$ docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy backup_flow.py:backup_flow -n backup-flow --pool default'
+13:16:55.604 | DEBUG   | prefect.profiles - Using profile 'ephemeral'
+Unable to read the specified config file. Reason: [Errno 2] No such file or
+directory: 'prefect.yaml'. Skipping.
+13:16:56.780 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:16:56.818 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+Your Prefect workers will attempt to load your flow from:
+/opt/prefect/flows/backup_flow.py. To see more options for managing your flow's
+code, run:
+
+        $ prefect init
+
+13:16:57.444 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+13:16:57.490 | DEBUG   | prefect.client - Connecting to API at http://0.0.0.0:4200/api/
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Deployment 'Minecraf World Backup Flow/backup-flow' successfully created     │
+│ with id '8314dbd4-d642-487b-83b0-e64c5d530e43'.                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+View Deployment in UI: http://0.0.0.0:4200/deployments/deployment/8314dbd4-d642-487b-83b0-e64c5d530e43
+
+
+To schedule a run for this deployment, use the following command:
+
+        $ prefect deployment run 'Minecraf World Backup Flow/backup-flow'
+
+[ec2-user@ip-172-26-13-191 flows]$
+
+[ec2-user@ip-172-26-13-191 flows]$ docker exec prefect-server bash -c 'prefect init'
+13:27:04.257 | DEBUG   | prefect.profiles - Using profile 'ephemeral'
+Created project in /app with the following new files:
+.prefectignore
+prefect.yaml
+[ec2-user@ip-172-26-13-191 flows]$ docker ps
+CONTAINER ID   IMAGE                               COMMAND                  CREATED             STATUS                       PORTS                                       NAMES
+2932e7e8c5d2   haziqishere/custom-prefect:latest   "/app/entrypoint.sh …"   About an hour ago   Up 4 minutes                 4200/tcp                                    prefect-worker
+0ca13b7fa980   haziqishere/custom-prefect:latest   "/app/entrypoint.sh …"   About an hour ago   Up About an hour (healthy)   0.0.0.0:4200->4200/tcp, :::4200->4200/tcp   prefect-server

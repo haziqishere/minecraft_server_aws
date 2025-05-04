@@ -1,0 +1,25 @@
+# Prefect configuration
+prefect-version: null
+name: minecraft-automation
+
+# Define pull steps to run when deploying
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: /opt/prefect/flows
+
+# Define our deployments
+deployments:
+  - name: backup-flow
+    entrypoint: backup_flow.py:backup_flow
+    work_pool:
+      name: default
+    
+  - name: server-monitoring-flow
+    entrypoint: server_monitoring_flow.py:server_monitoring_flow
+    work_pool:
+      name: default
+    
+  - name: snapshot-flow
+    entrypoint: snapshot_flow.py:snapshot_flow
+    work_pool:
+      name: default 

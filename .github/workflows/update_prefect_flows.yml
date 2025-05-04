@@ -1,0 +1,192 @@
+name: "Update Prefect Flows"
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'prefect/flows/**'
+  workflow_dispatch:
+    inputs:
+      prefect_ip:
+        description: 'IP address of the Prefect instance'
+        required: false
+        type: string
+      flow_to_update:
+        description: 'Specific flow to update (leave empty to update all flows)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
+
+jobs:
+  update_flows:
+    name: "Update Prefect Flows"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      # Get the Prefect instance IP from workflow input or AWS
+      - name: Get Prefect instance IP
+        id: prefect_ip
+        run: |
+          if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
+            # Use the provided IP from workflow input
+            PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
+          else
+            # Setup Terraform
+            sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
+            wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get update && sudo apt-get install -y terraform
+            
+            # Initialize Terraform
+            cd terraform
+            terraform init -input=false
+            
+            # Get IP from Terraform output
+            PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null || echo "")
+            cd ..
+          fi
+          
+          if [ -z "$PREFECT_IP" ]; then
+            echo "Could not determine Prefect instance IP"
+            exit 1
+          fi
+          
+          echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
+          echo "Prefect instance IP: $PREFECT_IP"
+      
+      # Setup SSH for connecting to the instance
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
+      
+      # Identify changed files if no specific flow is specified
+      - name: Identify changed flows
+        id: changed_flows
+        run: |
+          if [ -n "${{ github.event.inputs.flow_to_update }}" ]; then
+            echo "Specific flow to update: ${{ github.event.inputs.flow_to_update }}"
+            FLOW_FILES="prefect/flows/${{ github.event.inputs.flow_to_update }}"
+          else
+            # Get list of changed files in the prefect/flows directory
+            git fetch origin
+            BASE_SHA=$(git merge-base origin/main HEAD)
+            FLOW_FILES=$(git diff --name-only $BASE_SHA HEAD | grep "^prefect/flows/.*\.py$" || echo "")
+            if [ -z "$FLOW_FILES" ]; then
+              echo "No flow files changed"
+              # Still continue to make sure setup works
+              FLOW_FILES="prefect/flows/*.py"
+            fi
+          fi
+          
+          echo "FLOW_FILES=$FLOW_FILES" >> $GITHUB_ENV
+          echo "Flow files to update: $FLOW_FILES"
+      
+      # Copy only the changed flow files to the Prefect instance
+      - name: Copy updated flow files
+        run: |
+          echo "Copying updated flow files to the Prefect instance"
+          for flow_file in $FLOW_FILES; do
+            if [ -f "$flow_file" ]; then
+              echo "Copying $flow_file"
+              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} $flow_file ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
+            fi
+          done
+      
+      # Create prefect.yaml file on instance if it doesn't exist
+      - name: Create prefect.yaml
+        run: |
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            cd ~/prefect
+            if [ ! -f prefect.yaml ]; then
+              echo 'Creating prefect.yaml file'
+              cat > prefect.yaml << 'EOF'
+              # Prefect configuration
+              prefect-version: null
+              name: minecraft-automation
+
+              # Define pull steps to run when deploying
+              pull:
+                - prefect.deployments.steps.set_working_directory:
+                    directory: /opt/prefect/flows
+
+              # Define our deployments
+              deployments:
+                - name: backup-flow
+                  entrypoint: backup_flow.py:backup_flow
+                  work_pool:
+                    name: default
+                
+                - name: server-monitoring-flow
+                  entrypoint: server_monitoring_flow.py:server_monitoring_flow
+                  work_pool:
+                    name: default
+                
+                - name: snapshot-flow
+                  entrypoint: snapshot_flow.py:snapshot_flow
+                  work_pool:
+                    name: default
+              EOF
+            fi
+          "
+      
+      # Wait for Prefect server to be ready
+      - name: Wait for Prefect Server
+        run: |
+          # Wait for container to be ready (max 120 seconds)
+          for i in {1..24}; do
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker inspect prefect-server --format '{{.State.Status}}' | grep -q running"; then
+              # Additional check to ensure the container is truly ready
+              if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server bash -c 'prefect version' &>/dev/null"; then
+                echo "Prefect server is running and responsive"
+                break
+              fi
+            fi
+            echo "Waiting for Prefect server to be ready... Attempt $i/24"
+            sleep 5
+          done
+      
+      # Register/update flows using prefect deploy
+      - name: Register updated flows
+        run: |
+          echo "Registering updated flows..."
+          # Check if work pool 'default' exists, create if not
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
+            
+            # Start worker if not already running
+            docker exec prefect-server bash -c 'prefect worker start --pool default &' &
+            
+            # Deploy each updated flow
+            cd ~/prefect
+            for flow_file in \$(ls -1 flows/*.py | grep -v '__init__' | grep -v '__pycache__'); do
+              flow_name=\$(basename \$flow_file)
+              echo \"Deploying flow: \$flow_name\"
+              
+              # Extract flow function name from file (assuming it matches file name pattern)
+              flow_func=\$(echo \$flow_name | sed 's/\.py//')
+              
+              # Deploy the flow
+              docker exec prefect-server bash -c \"cd /opt/prefect/flows && prefect deploy \$(basename \$flow_file):\$flow_func -n \$flow_func-deployment --pool default\"
+            done
+          "
+      
+      # Output UI link
+      - name: Output Prefect UI URL
+        run: |
+          echo "Prefect flows updated successfully!"
+          echo "Prefect UI available at: http://${{ env.PREFECT_IP }}:4200" 

@@ -7,11 +7,15 @@
 #   status - Check status of Prefect services
 #   logs   - View logs of Prefect services
 #   update - Update Prefect images and restart services
+#   update-flows - Update flow files without rebuilding container
+#   register - Register all flows with Prefect
 # Options:
 #   image_tag - Docker image tag to use (default: latest)
+#   flow_name - (For update-flows) Specific flow file to update, e.g., backup_flow.py
 
 COMMAND=${1:-status}
 IMAGE_TAG=${2:-latest}
+FLOW_NAME=${3:-""}
 
 # Set Docker image with username from environment or default
 DOCKER_USERNAME=${DOCKER_USERNAME:-haziqishere}
@@ -76,6 +80,52 @@ case $COMMAND in
     docker-compose restart
     ;;
     
+  update-flows)
+    echo "Updating flow files without rebuilding container..."
+    
+    # Check if we're updating a specific flow or all flows
+    if [ -n "$FLOW_NAME" ]; then
+      # Update a specific flow
+      FLOW_FILE="flows/$FLOW_NAME"
+      if [ -f "$FLOW_FILE" ]; then
+        FLOW_BASE=$(basename "$FLOW_NAME" .py)
+        echo "Updating flow: $FLOW_BASE"
+        
+        # Copy flow file to the container
+        docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
+        
+        # Register the flow
+        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect work-pool create default -t process || echo 'Pool already exists'"
+        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+        
+        echo "Flow $FLOW_BASE updated successfully!"
+      else
+        echo "Error: Flow file '$FLOW_FILE' not found!"
+        exit 1
+      fi
+    else
+      # Update all flows
+      echo "Updating all flows..."
+      
+      # Create work pool if it doesn't exist
+      docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Pool already exists'"
+      
+      # Copy all flow files and register them
+      for FLOW_FILE in flows/*.py; do
+        if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
+          FLOW_NAME=$(basename "$FLOW_FILE")
+          FLOW_BASE=$(basename "$FLOW_FILE" .py)
+          
+          echo "Updating flow: $FLOW_BASE"
+          docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
+          docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+        fi
+      done
+      
+      echo "All flows updated successfully!"
+    fi
+    ;;
+    
   register)
     echo "Registering flows with Prefect..."
     # Wait for server to be ready
@@ -93,16 +143,26 @@ case $COMMAND in
       sleep 5
     done
     
-    # Register flows
-    docker exec prefect-server bash -c 'cd /opt/prefect/flows && \
-      prefect deployment run backup_flow.py:backup_flow -n scheduled-backup -q default && \
-      prefect deployment run server_monitoring_flow.py:server_monitoring_flow -n server-monitoring -q default && \
-      prefect deployment run snapshot_flow.py:snapshot_flow -n snapshot-flow -q default'
+    # Create work pool if it doesn't exist
+    docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Pool already exists'"
+    
+    # Register all flows
+    echo "Registering all flows..."
+    for FLOW_FILE in flows/*.py; do
+      if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
+        FLOW_NAME=$(basename "$FLOW_FILE")
+        FLOW_BASE=$(basename "$FLOW_FILE" .py)
+        
+        echo "Deploying flow: $FLOW_BASE"
+        docker cp $FLOW_FILE prefect-server:/opt/prefect/flows/$FLOW_NAME
+        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+      fi
+    done
     ;;
     
   *)
     echo "Unknown command: $COMMAND"
-    echo "Usage: $0 [deploy|status|logs|update|restart|register] [image_tag]"
+    echo "Usage: $0 [deploy|status|logs|update|restart|update-flows|register] [image_tag] [flow_name]"
     exit 1
     ;;
 esac
