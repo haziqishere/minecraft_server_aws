@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class RemoteExecutor:
     """Helper class for executing commands on the Minecraft server via SSH."""
     def __init__(self, hostname: str, username: str = "ec2-user", 
-                 key_path: str = "~/.ssh/kroni-survival-key.pem"):
+                 key_path: str = "~/.ssh/github-action-key"): # TODO: Try change to github-action-key from /.ssh/kroni-survival-key.pem
         """Initialize SSH connection parameters."""
         self.hostname = hostname
         self.username = username
