@@ -1,3 +1,5 @@
+# This Dockerfile should be built using buildx for multi-platform support:
+# docker buildx build --platform linux/amd64,linux/arm64 -t username/custom-prefect:latest --push .
 FROM python:3.10-slim
 WORKDIR /app
 

@@ -47,6 +47,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: ./prefect
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/kroni-prefect:latest
 
