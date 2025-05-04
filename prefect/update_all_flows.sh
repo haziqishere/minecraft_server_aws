@@ -47,8 +47,8 @@ for FLOW_FILE in $FLOW_FILES; do
     echo "-------------------------------------------"
     echo "Processing file: $FLOW_NAME"
     
-    # Find flow functions in the file
-    FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+    # Find flow functions with improved pattern
+    FLOW_FUNCS=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
     
     if [ -z "$FLOW_FUNCS" ]; then
         echo "Warning: No flow functions found in $FLOW_NAME, skipping..."

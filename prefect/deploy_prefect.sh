@@ -67,11 +67,11 @@ case $COMMAND in
         FLOW_BASE=$(basename "$FLOW_NAME" .py)
         echo "Updating flow: $FLOW_BASE"
         
-        # Check if the flow file contains the specified flow function
-        if ! grep -q "@flow.*def $FLOW_BASE" "$FLOW_FILE"; then
+        # Check if the flow file contains the specified flow function using improved pattern
+        if ! grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+$FLOW_BASE" "$FLOW_FILE" > /dev/null; then
           echo "Warning: File $FLOW_FILE might not contain a flow function named '$FLOW_BASE'"
           echo "Looking for any flow function in the file..."
-          FLOW_FUNC=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | head -1 | awk '{print $NF}')
+          FLOW_FUNC=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | head -1 | cut -d ' ' -f2)
           
           if [ -n "$FLOW_FUNC" ]; then
             echo "Found flow function: $FLOW_FUNC"
@@ -110,8 +110,8 @@ case $COMMAND in
         if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
           FLOW_NAME=$(basename "$FLOW_FILE")
           
-          # Check for flow functions in the file
-          FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+          # Check for flow functions in the file with improved pattern
+          FLOW_FUNCS=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
           
           if [ -z "$FLOW_FUNCS" ]; then
             echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
@@ -171,8 +171,8 @@ case $COMMAND in
       if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
         FLOW_NAME=$(basename "$FLOW_FILE")
         
-        # Check for flow functions in the file
-        FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+        # Check for flow functions in the file with improved pattern
+        FLOW_FUNCS=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
         
         if [ -z "$FLOW_FUNCS" ]; then
           echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
