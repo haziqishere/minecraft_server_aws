@@ -258,7 +258,7 @@ resource "aws_lightsail_instance" "prefect_orchestration" {
   name              = "kroni-survival-prefect-orchestration"
   availability_zone = "${var.aws_region}a"
   blueprint_id      = "amazon_linux_2"
-  bundle_id         = "nano_3_0"
+  bundle_id         = "micro_3_0"
   key_pair_name     = var.ssh_key_name
 
   tags = {
