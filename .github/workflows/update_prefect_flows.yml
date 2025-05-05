@@ -112,6 +112,32 @@ jobs:
               scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} $flow_file ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
             fi
           done
+          
+          # Copy requirements.txt
+          if [ -f "prefect/requirements.txt" ]; then
+            echo "Copying requirements.txt"
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
+          fi
+      
+      # Install dependencies
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies in Prefect containers..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if [ -f ~/prefect/requirements.txt ]; then
+              echo 'Installing dependencies in prefect-server container...'
+              docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
+              docker exec prefect-server pip install -r /tmp/requirements.txt
+              
+              echo 'Installing dependencies in prefect-worker container...'
+              docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
+              docker exec prefect-worker pip install -r /tmp/requirements.txt
+              
+              echo 'Dependencies installed successfully'
+            else
+              echo 'requirements.txt not found, skipping dependency installation'
+            fi
+          "
       
       # Create prefect.yaml file on instance if it doesn't exist
       - name: Create prefect.yaml

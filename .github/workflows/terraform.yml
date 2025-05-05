@@ -64,6 +64,10 @@ jobs:
           cp ../prefect/Dockerfile ./prefect/
           cp ../prefect/docker-compose.yaml ./prefect/
           cp ../prefect/deploy_prefect.sh ./prefect/
+          # Copy requirements.txt if it exists
+          if [ -f ../prefect/requirements.txt ]; then
+            cp ../prefect/requirements.txt ./prefect/
+          fi
 
       - name: Terraform Format
         id: fmt
@@ -243,6 +247,26 @@ jobs:
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
             docker exec prefect-server bash -c 'prefect config set PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api'
             echo 'PREFECT_API_URL configuration set to http://${{ env.PREFECT_IP }}:4200/api'
+          "
+
+      # Install Python dependencies
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies in Prefect containers..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if [ -f ~/prefect/requirements.txt ]; then
+              echo 'Installing dependencies in prefect-server container...'
+              docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
+              docker exec prefect-server pip install -r /tmp/requirements.txt
+              
+              echo 'Installing dependencies in prefect-worker container...'
+              docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
+              docker exec prefect-worker pip install -r /tmp/requirements.txt
+              
+              echo 'Dependencies installed successfully'
+            else
+              echo 'requirements.txt not found, skipping dependency installation'
+            fi
           "
 
       - name: Register Prefect Deployments
