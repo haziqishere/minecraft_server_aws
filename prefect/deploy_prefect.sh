@@ -17,7 +17,23 @@ FLOW_NAME=${2:-""}
 # Prefect now uses the official image
 export PREFECT_IMAGE="prefecthq/prefect:3-latest"
 
+# Get the server hostname/IP for external connections
+# Set default PREFECT_HOST to public IP or hostname if available, otherwise use localhost
+if [ -z "$PREFECT_HOST" ]; then
+  # Try to determine public IP from EC2 metadata
+  PREFECT_HOST=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
+  
+  if [ -z "$PREFECT_HOST" ]; then
+    # Try to get hostname from system
+    PREFECT_HOST=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+  fi
+  
+  export PREFECT_HOST
+  echo "Auto-detected PREFECT_HOST: ${PREFECT_HOST}"
+fi
+
 echo "Using Prefect image: ${PREFECT_IMAGE}"
+echo "Using Prefect host for external connections: ${PREFECT_HOST}"
 
 case $COMMAND in
   deploy)
@@ -67,11 +83,23 @@ case $COMMAND in
         FLOW_BASE=$(basename "$FLOW_NAME" .py)
         echo "Updating flow: $FLOW_BASE"
         
-        # Check if the flow file contains the specified flow function
-        if ! grep -q "@flow.*def $FLOW_BASE" "$FLOW_FILE"; then
+        # Print file content for debugging
+        echo "File content (first 15 lines):"
+        head -n 15 "$FLOW_FILE"
+        
+        # Check if the flow file contains the specified flow function using improved pattern
+        if ! grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+$FLOW_BASE" "$FLOW_FILE" > /dev/null; then
           echo "Warning: File $FLOW_FILE might not contain a flow function named '$FLOW_BASE'"
           echo "Looking for any flow function in the file..."
-          FLOW_FUNC=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | head -1 | awk '{print $NF}')
+          
+          # First try with the enhanced pattern
+          FLOW_FUNC=$(grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | head -1 | cut -d ' ' -f2)
+          
+          # If no matches, try a more permissive pattern
+          if [ -z "$FLOW_FUNC" ]; then
+              echo "Trying alternate flow detection method..."
+              FLOW_FUNC=$(grep -A 1 "@flow" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | head -1 | cut -d ' ' -f2)
+          fi
           
           if [ -n "$FLOW_FUNC" ]; then
             echo "Found flow function: $FLOW_FUNC"
@@ -91,7 +119,7 @@ case $COMMAND in
         docker exec prefect-server bash -c "prefect work-pool create default -t process || echo 'Pool already exists'"
         
         echo "Deploying flow $FLOW_NAME:$FLOW_BASE..."
-        docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
+        docker exec -e PREFECT_API_URL=http://${PREFECT_HOST}:4200/api prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_BASE -n $FLOW_BASE-deployment --pool default"
         
         echo "Flow $FLOW_BASE updated successfully!"
       else
@@ -110,21 +138,32 @@ case $COMMAND in
         if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
           FLOW_NAME=$(basename "$FLOW_FILE")
           
-          # Check for flow functions in the file
-          FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+          # Print file content for debugging
+          echo "File content of $FLOW_NAME (first 15 lines):"
+          head -n 15 "$FLOW_FILE"
+          
+          # First try with the enhanced pattern
+          FLOW_FUNCS=$(grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+          
+          # If no matches, try a more permissive pattern
+          if [ -z "$FLOW_FUNCS" ]; then
+              echo "Trying alternate flow detection method for $FLOW_NAME..."
+              FLOW_FUNCS=$(grep -A 1 "@flow" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+          fi
           
           if [ -z "$FLOW_FUNCS" ]; then
             echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
             continue
           fi
           
+          echo "Found flow functions in $FLOW_NAME: $FLOW_FUNCS"
           echo "Copying $FLOW_FILE to container..."
           docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
           
           # Deploy each flow function found in the file
           for FLOW_FUNC in $FLOW_FUNCS; do
             echo "Deploying flow: $FLOW_NAME:$FLOW_FUNC"
-            docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
+            docker exec -e PREFECT_API_URL=http://${PREFECT_HOST}:4200/api prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
           done
         fi
       done
@@ -171,21 +210,32 @@ case $COMMAND in
       if [[ "$FLOW_FILE" != *"__init__.py"* && "$FLOW_FILE" != *"__pycache__"* ]]; then
         FLOW_NAME=$(basename "$FLOW_FILE")
         
-        # Check for flow functions in the file
-        FLOW_FUNCS=$(grep -o "@flow.*def \w\+" "$FLOW_FILE" | awk '{print $NF}')
+        # Print file content for debugging
+        echo "File content of $FLOW_NAME (first 15 lines):"
+        head -n 15 "$FLOW_FILE"
+        
+        # First try with the enhanced pattern
+        FLOW_FUNCS=$(grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+        
+        # If no matches, try a more permissive pattern
+        if [ -z "$FLOW_FUNCS" ]; then
+            echo "Trying alternate flow detection method for $FLOW_NAME..."
+            FLOW_FUNCS=$(grep -A 1 "@flow" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+        fi
         
         if [ -z "$FLOW_FUNCS" ]; then
           echo "Warning: No flow functions found in $FLOW_NAME, skipping..."
           continue
         fi
         
+        echo "Found flow functions in $FLOW_NAME: $FLOW_FUNCS"
         echo "Copying $FLOW_FILE to container..."
         docker cp "$FLOW_FILE" prefect-server:/opt/prefect/flows/"$FLOW_NAME"
         
         # Deploy each flow function found in the file
         for FLOW_FUNC in $FLOW_FUNCS; do
           echo "Deploying flow: $FLOW_NAME:$FLOW_FUNC"
-          docker exec prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
+          docker exec -e PREFECT_API_URL=http://${PREFECT_HOST}:4200/api prefect-server bash -c "cd /opt/prefect/flows && prefect deploy $FLOW_NAME:$FLOW_FUNC -n $FLOW_FUNC-deployment --pool default"
         done
       fi
     done
