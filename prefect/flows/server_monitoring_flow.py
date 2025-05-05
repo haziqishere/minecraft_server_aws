@@ -30,7 +30,7 @@ import requests
 DEFAULT_CONFIG = {
     "instance_name": "kroni-survival-server",
     "region": "ap-southeast-1",
-    "discord_webhook_url": "",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9",
     "minecraft_container_name": "minecraft-server",
     "data_path": "/data",
     "world_path": "/data/world"
