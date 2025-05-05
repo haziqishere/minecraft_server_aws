@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'prefect/**'
+      - '!prefect/flows/**'  # Exclude flows directory since it's handled by update_prefect_flows.yml
       - '.github/workflows/main.yml'
   workflow_dispatch:
     inputs:
@@ -74,7 +75,10 @@ jobs:
           if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
             # Use the provided IP from workflow input
             PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
+            echo "Using provided Prefect IP: $PREFECT_IP"
           else
+            echo "No Prefect IP provided, attempting to get from Terraform..."
+            
             # Setup Terraform
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
             wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
@@ -82,13 +86,35 @@ jobs:
             sudo apt-get update && sudo apt-get install -y terraform
             
             # Initialize Terraform
-            terraform -chdir=./terraform init -input=false
+            cd terraform
+            echo "Initializing Terraform..."
+            terraform init -input=false
             
-            # Get IP from Terraform output
-            PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
+            # Get IP from Terraform output with error handling
+            echo "Getting Prefect IP from Terraform output..."
+            if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
+              echo "Failed to get Prefect IP from Terraform output."
+              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            # Validate the IP
+            if [ -z "$PREFECT_IP" ]; then
+              echo "Prefect IP from Terraform is empty."
+              echo "::error::Prefect IP from Terraform is empty. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
+            cd ..
           fi
+          
+          # Output the IP for debugging
+          echo "Using Prefect IP: $PREFECT_IP"
+          
+          # Set output parameter and environment variable
+          echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
-          echo "Prefect instance IP: $PREFECT_IP"
       
       # Setup SSH for connecting to the instance
       - name: Setup SSH
@@ -101,11 +127,13 @@ jobs:
       # Prepare the Prefect instance
       - name: Prepare Instance
         run: |
+          echo "Connecting to instance at ${{ env.PREFECT_IP }} to prepare directories..."
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} 'mkdir -p ~/prefect/flows'
       
       # Copy files to the Prefect instance
       - name: Copy Files
         run: |
+          echo "Copying files to ${{ env.PREFECT_IP }}..."
           scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ./prefect/Dockerfile ./prefect/docker-compose.yaml ec2-user@${{ env.PREFECT_IP }}:~/prefect/
           scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ./prefect/deploy_prefect.sh ec2-user@${{ env.PREFECT_IP }}:~/prefect/
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'chmod +x ~/prefect/deploy_prefect.sh'
@@ -136,6 +164,7 @@ jobs:
       # Deploy or update depending on the action
       - name: Execute Deployment
         run: |
+          echo "Executing deployment action on ${{ env.PREFECT_IP }}..."
           if [ "${{ github.event.inputs.action }}" == "logs" ]; then
             ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh logs'
           elif [ "${{ github.event.inputs.action }}" == "restart" ]; then
@@ -149,6 +178,7 @@ jobs:
       # Check status after deployment
       - name: Check Status
         run: |
+          echo "Checking status on ${{ env.PREFECT_IP }}..."
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'cd ~/prefect && ./deploy_prefect.sh status'
           
       # Output URL for Prefect UI
@@ -161,6 +191,8 @@ jobs:
     needs: [deploy]
     runs-on: ubuntu-latest
     if: github.event.inputs.action != 'logs'
+    outputs:
+      prefect_ip: ${{ steps.get_ip.outputs.prefect_ip }}
     
     steps:
       - name: Checkout
@@ -175,12 +207,15 @@ jobs:
           
       # Get the Prefect instance IP from workflow input or AWS
       - name: Get Prefect instance IP
-        id: prefect_ip
+        id: get_ip
         run: |
           if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
             # Use the provided IP from workflow input
             PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
+            echo "Using provided Prefect IP: $PREFECT_IP"
           else
+            echo "No Prefect IP provided, attempting to get from Terraform..."
+            
             # Setup Terraform
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
             wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
@@ -188,13 +223,35 @@ jobs:
             sudo apt-get update && sudo apt-get install -y terraform
             
             # Initialize Terraform
-            terraform -chdir=./terraform init -input=false
+            cd terraform
+            echo "Initializing Terraform..."
+            terraform init -input=false
             
-            # Get IP from Terraform output
-            PREFECT_IP=$(terraform -chdir=./terraform output -raw prefect_orchestration_ip)
+            # Get IP from Terraform output with error handling
+            echo "Getting Prefect IP from Terraform output..."
+            if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
+              echo "Failed to get Prefect IP from Terraform output."
+              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            # Validate the IP
+            if [ -z "$PREFECT_IP" ]; then
+              echo "Prefect IP from Terraform is empty."
+              echo "::error::Prefect IP from Terraform is empty. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
+            cd ..
           fi
+          
+          # Output the IP for debugging
+          echo "Using Prefect IP: $PREFECT_IP"
+          
+          # Set output parameter and environment variable
+          echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
-          echo "Prefect instance IP: $PREFECT_IP"
       
       # Move SSH setup BEFORE any SSH commands
       - name: Setup SSH
@@ -202,11 +259,13 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          echo "Setting up SSH connection to ${{ env.PREFECT_IP }}..."
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
       # Wait for Prefect Server
       - name: Wait for Prefect Server
         run: |
+          echo "Waiting for Prefect server at ${{ env.PREFECT_IP }} to be ready..."
           # Wait for container to be ready (max 120 seconds)
           for i in {1..24}; do
             if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')\" 2>/dev/null"; then
@@ -256,6 +315,7 @@ jobs:
       
       - name: Register Prefect Deployments
         run: |
+          echo "Registering Prefect deployments on ${{ env.PREFECT_IP }}..."
           # Create work pool if needed
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
             docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
@@ -267,10 +327,11 @@ jobs:
               flow_name=$(basename "$flow_file")
               
               # Copy the flow file to the server
+              echo "Copying $flow_name to ${{ env.PREFECT_IP }}..."
               scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} "$flow_file" ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
               
-              # Find flow functions in the file
-              flow_funcs=$(grep -o "@flow.*def \w\+" "$flow_file" | awk '{print $NF}')
+              # Find flow functions with improved pattern
+              flow_funcs=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$flow_file" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
               
               if [ -z "$flow_funcs" ]; then
                 echo "Warning: No flow functions found in $flow_name, skipping..."
@@ -279,7 +340,7 @@ jobs:
               
               # Deploy each flow function
               for flow_func in $flow_funcs; do
-                echo "Deploying $flow_name:$flow_func"
+                echo "Deploying $flow_name:$flow_func on ${{ env.PREFECT_IP }}..."
                 ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
                   docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy $flow_name:$flow_func -n $flow_func-deployment --pool default'
                 "

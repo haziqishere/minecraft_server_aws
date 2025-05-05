@@ -42,7 +42,10 @@ jobs:
           if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
             # Use the provided IP from workflow input
             PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
+            echo "Using provided Prefect IP: $PREFECT_IP"
           else
+            echo "No Prefect IP provided, attempting to get from Terraform..."
+            
             # Setup Terraform
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
             wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
@@ -51,18 +54,32 @@ jobs:
             
             # Initialize Terraform
             cd terraform
+            echo "Initializing Terraform..."
             terraform init -input=false
             
-            # Get IP from Terraform output
-            PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null || echo "")
+            # Get IP from Terraform output with error handling
+            echo "Getting Prefect IP from Terraform output..."
+            if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
+              echo "Failed to get Prefect IP from Terraform output."
+              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            # Validate the IP
+            if [ -z "$PREFECT_IP" ]; then
+              echo "Prefect IP from Terraform is empty."
+              echo "::error::Prefect IP from Terraform is empty. Please provide an IP address manually."
+              exit 1
+            fi
+            
+            echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
             cd ..
           fi
           
-          if [ -z "$PREFECT_IP" ]; then
-            echo "Could not determine Prefect instance IP"
-            exit 1
-          fi
+          # Output the IP for debugging
+          echo "Using Prefect IP: $PREFECT_IP"
           
+
           # Output the IP for debugging
           echo "Using Prefect IP: $PREFECT_IP"
           
@@ -71,6 +88,7 @@ jobs:
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
           echo "PREFECT_HOST=$PREFECT_IP" >> $GITHUB_ENV
           echo "Prefect instance IP: $PREFECT_IP"
+
       
       # Setup SSH for connecting to the instance
       - name: Setup SSH
@@ -78,6 +96,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
           chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+          echo "Setting up SSH connection to ${{ env.PREFECT_IP }}..."
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
       # Identify changed files if no specific flow is specified
@@ -105,7 +124,7 @@ jobs:
       # Copy only the changed flow files to the Prefect instance
       - name: Copy updated flow files
         run: |
-          echo "Copying updated flow files to the Prefect instance"
+          echo "Copying updated flow files to the Prefect instance at ${{ env.PREFECT_IP }}..."
           for flow_file in $FLOW_FILES; do
             if [ -f "$flow_file" ]; then
               echo "Copying $flow_file"
@@ -142,6 +161,7 @@ jobs:
       # Create prefect.yaml file on instance if it doesn't exist
       - name: Create prefect.yaml
         run: |
+          echo "Creating prefect.yaml file if needed on ${{ env.PREFECT_IP }}..."
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
             cd ~/prefect
             if [ ! -f prefect.yaml ]; then
@@ -199,6 +219,7 @@ jobs:
       # Wait for Prefect server to be ready
       - name: Wait for Prefect Server
         run: |
+          echo "Waiting for Prefect server at ${{ env.PREFECT_IP }} to be ready..."
           # Wait for container to be ready (max 120 seconds)
           for i in {1..24}; do
             # Use Python for health check instead of curl
@@ -242,7 +263,7 @@ jobs:
             
             FLOW_NAME=$(basename "$FLOW_FILE")
             echo "Checking $FLOW_NAME for flow functions..."
-            
+
             # Print file content for debugging
             echo "File content (first 15 lines):"
             head -n 15 "$FLOW_FILE"
@@ -270,7 +291,7 @@ jobs:
       # Register/update flows
       - name: Register updated flows
         run: |
-          echo "Registering updated flows..."
+          echo "Registering updated flows on ${{ env.PREFECT_IP }}..."
           
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
             cd ~/prefect
