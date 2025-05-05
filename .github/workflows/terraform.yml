@@ -236,6 +236,15 @@ jobs:
             sleep 5
           done
 
+      # Set proper API URL configuration
+      - name: Configure Prefect API URL
+        run: |
+          echo "Setting Prefect API URL to use public IP..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            docker exec prefect-server bash -c 'prefect config set PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api'
+            echo 'PREFECT_API_URL configuration set to http://${{ env.PREFECT_IP }}:4200/api'
+          "
+
       - name: Register Prefect Deployments
         run: |
           # Create work pool if needed
