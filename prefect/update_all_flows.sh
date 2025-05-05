@@ -47,8 +47,19 @@ for FLOW_FILE in $FLOW_FILES; do
     echo "-------------------------------------------"
     echo "Processing file: $FLOW_NAME"
     
-    # Find flow functions with improved pattern
-    FLOW_FUNCS=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+
+    # Print file content for debugging
+    echo "File content (first 15 lines):"
+    head -n 15 "$FLOW_FILE"
+    
+    # First try with the enhanced pattern
+    FLOW_FUNCS=$(grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+    
+    # If no matches, try a more permissive pattern
+    if [ -z "$FLOW_FUNCS" ]; then
+        echo "Trying alternate flow detection method..."
+        FLOW_FUNCS=$(grep -A 1 "@flow" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+    fi
     
     if [ -z "$FLOW_FUNCS" ]; then
         echo "Warning: No flow functions found in $FLOW_NAME, skipping..."

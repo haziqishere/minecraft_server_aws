@@ -19,8 +19,11 @@ services:
       - ./flows:/opt/prefect/flows
       - ${HOME}/.aws:/root/.aws:ro
     environment:
+      # Internal URLs for server use - inside container
       - PREFECT_API_URL=http://0.0.0.0:4200/api
       - PREFECT_UI_URL=http://0.0.0.0:4200
+      # External URLs for client use - accessible from outside
+      - PREFECT_UI_API_URL=http://${PREFECT_HOST:-localhost}:4200/api
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
       - PREFECT_LOGGING_LEVEL=DEBUG
       - PREFECT_HOME=/root/.prefect
@@ -44,7 +47,7 @@ services:
       - ${HOME}/.aws:/root/.aws:ro
       - ${HOME}/.ssh:/root/.ssh:ro
     environment:
-      # Use the IP address instead of hostname
+      # Use the IP address instead of hostname - needs to be accessible from worker
       - PREFECT_API_URL=http://172.28.0.2:4200/api
       - AWS_REGION=${AWS_REGION:-ap-southeast-1}
       # Add extra logging to help debug

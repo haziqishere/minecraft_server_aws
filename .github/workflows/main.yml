@@ -138,6 +138,11 @@ jobs:
           scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ./prefect/deploy_prefect.sh ec2-user@${{ env.PREFECT_IP }}:~/prefect/
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} 'chmod +x ~/prefect/deploy_prefect.sh'
           scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r ./prefect/flows/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
+          
+          # Copy requirements.txt
+          if [ -f ./prefect/requirements.txt ]; then
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ./prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
+          fi
       
       # Install Docker and Docker Compose if needed
       - name: Install Docker if needed
@@ -278,6 +283,35 @@ jobs:
             
             sleep 5
           done
+      
+      # Set proper API URL configuration
+      - name: Configure Prefect API URL
+        run: |
+          echo "Setting Prefect API URL to use public IP..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            docker exec prefect-server bash -c 'prefect config set PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api'
+            echo 'PREFECT_API_URL configuration set to http://${{ env.PREFECT_IP }}:4200/api'
+          "
+      
+      # Install Python dependencies
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies in Prefect containers..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if [ -f ~/prefect/requirements.txt ]; then
+              echo 'Installing dependencies in prefect-server container...'
+              docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
+              docker exec prefect-server pip install -r /tmp/requirements.txt
+              
+              echo 'Installing dependencies in prefect-worker container...'
+              docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
+              docker exec prefect-worker pip install -r /tmp/requirements.txt
+              
+              echo 'Dependencies installed successfully'
+            else
+              echo 'requirements.txt not found, skipping dependency installation'
+            fi
+          "
       
       - name: Register Prefect Deployments
         run: |

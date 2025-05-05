@@ -79,9 +79,16 @@ jobs:
           # Output the IP for debugging
           echo "Using Prefect IP: $PREFECT_IP"
           
-          # Set output parameter and environment variable
+
+          # Output the IP for debugging
+          echo "Using Prefect IP: $PREFECT_IP"
+          
+          # Set output parameter and environment variables
           echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
+          echo "PREFECT_HOST=$PREFECT_IP" >> $GITHUB_ENV
+          echo "Prefect instance IP: $PREFECT_IP"
+
       
       # Setup SSH for connecting to the instance
       - name: Setup SSH
@@ -124,6 +131,32 @@ jobs:
               scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} $flow_file ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
             fi
           done
+          
+          # Copy requirements.txt
+          if [ -f "prefect/requirements.txt" ]; then
+            echo "Copying requirements.txt"
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
+          fi
+      
+      # Install dependencies
+      - name: Install Python dependencies
+        run: |
+          echo "Installing Python dependencies in Prefect containers..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if [ -f ~/prefect/requirements.txt ]; then
+              echo 'Installing dependencies in prefect-server container...'
+              docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
+              docker exec prefect-server pip install -r /tmp/requirements.txt
+              
+              echo 'Installing dependencies in prefect-worker container...'
+              docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
+              docker exec prefect-worker pip install -r /tmp/requirements.txt
+              
+              echo 'Dependencies installed successfully'
+            else
+              echo 'requirements.txt not found, skipping dependency installation'
+            fi
+          "
       
       # Create prefect.yaml file on instance if it doesn't exist
       - name: Create prefect.yaml
@@ -163,6 +196,26 @@ jobs:
             fi
           "
       
+      # Set PREFECT_HOST environment variable on the instance
+      - name: Set PREFECT_HOST
+        run: |
+          echo "Setting PREFECT_HOST environment variable on ${{ env.PREFECT_IP }}..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            echo 'export PREFECT_HOST=${{ env.PREFECT_IP }}' > ~/.prefect_env
+            echo '[ -f ~/.prefect_env ] && source ~/.prefect_env' >> ~/.bashrc
+          "
+
+      # Restart Prefect services to pick up new environment variables
+      - name: Restart Prefect services
+        run: |
+          echo "Restarting Prefect services on ${{ env.PREFECT_IP }}..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            cd ~/prefect
+            docker-compose down
+            export PREFECT_HOST=${{ env.PREFECT_IP }}
+            docker-compose up -d
+          "
+
       # Wait for Prefect server to be ready
       - name: Wait for Prefect Server
         run: |
@@ -185,6 +238,15 @@ jobs:
             sleep 5
           done
       
+      # Set proper API URL configuration
+      - name: Configure Prefect API URL
+        run: |
+          echo "Setting Prefect API URL to use public IP..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            docker exec prefect-server bash -c 'prefect config set PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api'
+            echo 'PREFECT_API_URL configuration set to http://${{ env.PREFECT_IP }}:4200/api'
+          "
+      
       # Check flow files for errors
       - name: Check flow files
         run: |
@@ -201,10 +263,19 @@ jobs:
             
             FLOW_NAME=$(basename "$FLOW_FILE")
             echo "Checking $FLOW_NAME for flow functions..."
+
+            # Print file content for debugging
+            echo "File content (first 15 lines):"
+            head -n 15 "$FLOW_FILE"
             
-            # Look for flow functions with improved pattern to detect more formats
-            # This checks for both @flow and @flow(...) patterns followed by def function_name
-            FLOW_FUNCS=$(grep -E "@flow(\([^)]*\))?\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+            # First try with the enhanced pattern
+            FLOW_FUNCS=$(grep -E "@flow(\s*|\([^)]*\))\s*\n*\s*def\s+([a-zA-Z0-9_]+)" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+            
+            # If no matches, try a more permissive pattern
+            if [ -z "$FLOW_FUNCS" ]; then
+                echo "Trying alternate flow detection method..."
+                FLOW_FUNCS=$(grep -A 1 "@flow" "$FLOW_FILE" | grep -o "def\s\+[a-zA-Z0-9_]\+" | cut -d ' ' -f2)
+            fi
             
             if [ -z "$FLOW_FUNCS" ]; then
               echo "Warning: No flow functions found in $FLOW_NAME"
@@ -224,19 +295,32 @@ jobs:
           
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
             cd ~/prefect
+            export PREFECT_HOST=${{ env.PREFECT_IP }}
             
             # For each flow file that was copied
             for flow_file in \$(ls -1 flows/*.py | grep -v '__init__' | grep -v '__pycache__'); do
               flow_name=\$(basename \$flow_file)
               echo \"Processing \$flow_name\"
               
-              # Use improved pattern for flow detection
-              flow_funcs=\$(grep -E \"@flow(\\([^)]*\\))?\\s*\\n*\\s*def\\s+([a-zA-Z0-9_]+)\" \$flow_file | grep -o \"def\\s\\+[a-zA-Z0-9_]\\+\" | cut -d ' ' -f2)
+              # Print file content for debugging
+              echo \"File content (first 15 lines):\"
+              head -n 15 \$flow_file
+              
+              # First try with the enhanced pattern
+              flow_funcs=\$(grep -E \"@flow(\\s*|\\([^)]*\\))\\s*\\n*\\s*def\\s+([a-zA-Z0-9_]+)\" \$flow_file | grep -o \"def\\s\\+[a-zA-Z0-9_]\\+\" | cut -d ' ' -f2)
+              
+              # If no matches, try a more permissive pattern
+              if [ -z \"\$flow_funcs\" ]; then
+                  echo \"Trying alternate flow detection method...\"
+                  flow_funcs=\$(grep -A 1 \"@flow\" \$flow_file | grep -o \"def\\s\\+[a-zA-Z0-9_]\\+\" | cut -d ' ' -f2)
+              fi
               
               if [ -z \"\$flow_funcs\" ]; then
                 echo \"Warning: No flow functions found in \$flow_name, skipping...\"
                 continue
               fi
+              
+              echo \"Found flow functions: \$flow_funcs\"
               
               # Copy file to container
               echo \"Copying \$flow_file to container...\"
@@ -248,13 +332,14 @@ jobs:
               # Deploy each flow function
               for flow_func in \$flow_funcs; do
                 echo \"Deploying \$flow_name:\$flow_func\"
-                docker exec prefect-server bash -c \"cd /opt/prefect/flows && prefect deploy \$(basename \$flow_file):\$flow_func -n \$flow_func-deployment --pool default\"
+                docker exec prefect-server bash -c \"cd /opt/prefect/flows && PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api prefect deploy \$(basename \$flow_file):\$flow_func -n \$flow_func-deployment --pool default\"
               done
             done
             
             # Ensure worker is running
             if ! docker ps | grep -q prefect-worker; then
               echo \"Worker not running, starting it...\"
+              export PREFECT_HOST=${{ env.PREFECT_IP }}
               docker-compose up -d prefect-worker
             fi
           "
