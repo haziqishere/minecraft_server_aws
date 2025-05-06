@@ -474,7 +474,7 @@ EOF
               
               # Copy file to container
               echo \"Copying \$flow_file to container...\"
-              docker cp \$flow_file prefe ct-server:/opt/prefect/flows/\$(basename \$flow_file)
+              docker cp \$flow_file prefect-server:/opt/prefect/flows/\$(basename \$flow_file)
               
               # Create work pool if it doesn't exist
               docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
