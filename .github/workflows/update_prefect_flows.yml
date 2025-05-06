@@ -431,9 +431,14 @@ jobs:
               echo 'Testing SSH connection from container...'
               docker exec prefect-server ssh -o BatchMode=yes -o ConnectTimeout=5 ec2-user@localhost \"echo SSH test successful from container\"
               
-              # Set environment variables
+              # Set environment variables including the EC2 config path
               docker exec prefect-server bash -c 'echo \"export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api\" >> /root/.bashrc'
+              docker exec prefect-server bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" >> /root/.bashrc'
               docker exec prefect-worker bash -c 'echo \"export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api\" >> /root/.bashrc'
+              docker exec prefect-worker bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" >> /root/.bashrc'
+              
+              # Verify the config file exists in the expected location
+              docker exec prefect-server bash -c '[ -f /opt/prefect/config/ec2_config.ini ] && echo \"EC2 config found at /opt/prefect/config/ec2_config.ini\" || echo \"WARNING: EC2 config NOT found!\"'
             fi
             
             # For each flow file, copy to container and deploy
@@ -448,8 +453,27 @@ jobs:
               # Create work pool if it doesn't exist
               docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
               
-              # Deploy flow - using proper flow name detection
-              docker exec prefect-server bash -c \"cd /opt/prefect/flows && FLOW_FUNCTIONS=\\\$(grep -E '@flow' \$(basename \$flow_file) | grep -A 1 '@flow' | grep 'def' | awk '{print \\\$2}' | cut -d'(' -f1 | head -1) && if [ -n \\\"\\\$FLOW_FUNCTIONS\\\" ]; then PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default; else echo 'No flow function found in \$(basename \$flow_file)'; fi || echo 'Flow deployment failed'\"
+              # Deploy flow with improved flow function detection
+              docker exec prefect-server bash -c \"cd /opt/prefect/flows && 
+                # First find all @flow decorators and the function names that follow them
+                echo 'Analyzing \$(basename \$flow_file) for flow functions...' &&
+                FLOW_FUNCTIONS=\\\$(grep -B 1 -A 1 -E '@flow' \$(basename \$flow_file) | grep -E 'def\\s+[a-zA-Z0-9_]+\\(' | sed -E 's/.*def\\s+([a-zA-Z0-9_]+)\\(.*/\\1/g' | head -1) &&
+                echo 'Detected flow function: '\\\$FLOW_FUNCTIONS &&
+                
+                # If not found, try with server_monitoring_flow as fallback for backwards compatibility
+                if [ -z \\\"\\\$FLOW_FUNCTIONS\\\" ] && grep -q 'server_monitoring_flow' \$(basename \$flow_file); then
+                  echo 'Using fallback flow name: server_monitoring_flow' &&
+                  FLOW_FUNCTIONS='server_monitoring_flow'
+                fi &&
+                
+                # Deploy if we found a flow function
+                if [ -n \\\"\\\$FLOW_FUNCTIONS\\\" ]; then
+                  echo 'Deploying \$(basename \$flow_file):\\\$FLOW_FUNCTIONS...' &&
+                  PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default --override-env-vars KRONI_EC2_CONFIG
+                else
+                  echo 'ERROR: No flow function found in \$(basename \$flow_file)'
+                fi
+              \"
             done
             
             # Ensure worker is running
