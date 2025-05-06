@@ -31,25 +31,49 @@ DEFAULT_CONFIG = {
     "instance_name": "kroni-survival-server",
     "region": "ap-southeast-1",
     "discord_webhook_url": "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9",
-    "minecraft_container_name": "itzg/minecraft-server:latest",
+    "minecraft_container_name": "minecraft-server",
     "data_path": "/data",
     "world_path": "/data/world"
 }
 
 @task(name="Check Minecraft Server Status")
-def check_server_status(container_name: str = "itzg/minecraft-server:latest") -> bool:
+def check_server_status(container_name: str = "minecraft-server") -> bool:
     """Check if the Minecraft server is running"""
     logger = get_run_logger()
     logger.info(f"Checking Minecraft server status...")
     try:
+        # Use a more reliable approach to check if the container is running
         result = subprocess.run(
             ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"],
             capture_output=True,
             text=True,
             check=True,
         )
-        is_running = container_name in result.stdout
+        
+        # Clean up the output to handle potential whitespace or line breaks
+        container_names = [name.strip() for name in result.stdout.strip().split('\n') if name.strip()]
+        logger.info(f"Found running containers: {container_names}")
+        
+        # Check if any of the found container names match our target
+        is_running = any(name == container_name for name in container_names)
+        
+        # Also log the raw output for debugging
+        logger.info(f"Raw docker ps output: '{result.stdout}'")
         logger.info(f"Minecraft server status: {'Running' if is_running else 'Stopped'}")
+        
+        # Alternative approach in case format doesn't work well
+        if not is_running:
+            # Try another approach without formatting
+            alt_result = subprocess.run(
+                ["docker", "ps", "--filter", f"name={container_name}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            # If container name appears in the output and it's not just in the column headers
+            is_running = container_name in alt_result.stdout and len(alt_result.stdout.strip().split('\n')) > 1
+            logger.info(f"Alternative check result: {'Running' if is_running else 'Stopped'}")
+        
         return is_running
     except Exception as e:
         logger.error(f"Failed to check server status: {e}")

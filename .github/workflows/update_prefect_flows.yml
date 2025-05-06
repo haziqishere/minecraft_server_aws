@@ -183,11 +183,9 @@ jobs:
       - name: Create prefect.yaml
         run: |
           echo "Creating prefect.yaml file if needed on ${{ env.PREFECT_IP }}..."
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
-            cd ~/prefect
-            if [ ! -f prefect.yaml ]; then
-              echo 'Creating prefect.yaml file'
-              cat > prefect.yaml << EOF
+          
+          # Create a temporary prefect.yaml file locally
+          cat > /tmp/prefect.yaml << 'EOL'
 # Prefect configuration
 prefect-version: null
 name: minecraft-automation
@@ -213,7 +211,18 @@ deployments:
     entrypoint: snapshot_flow.py:snapshot_flow
     work_pool:
       name: default
-EOF
+EOL
+          
+          # Copy to the remote server
+          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} /tmp/prefect.yaml ec2-user@${{ env.PREFECT_IP }}:/tmp/prefect.yaml
+          
+          # Move it if it doesn't exist
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            if [ ! -f ~/prefect/prefect.yaml ]; then
+              echo 'Creating prefect.yaml file'
+              mv /tmp/prefect.yaml ~/prefect/prefect.yaml
+            else
+              echo 'prefect.yaml already exists, skipping'
             fi
           "
       
