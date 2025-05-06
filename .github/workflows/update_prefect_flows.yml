@@ -111,7 +111,6 @@ jobs:
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
           echo "PREFECT_HOST=$PREFECT_IP" >> $GITHUB_ENV
           echo "Prefect instance IP: $PREFECT_IP"
-
       
       # Setup SSH for connecting to the instance
       - name: Setup SSH
@@ -421,7 +420,6 @@ jobs:
               docker exec prefect-worker bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
               
               # Always update EC2 config to use localhost
-              echo 'Creating optimal EC2 config for containers...'
               cat > /tmp/container_ec2_config.ini << 'EOF'
 # EC2 instance connection details for container use
 EC2_HOST=localhost
@@ -436,6 +434,8 @@ EOF
               docker cp /tmp/container_ec2_config.ini prefect-worker:/opt/prefect/config/ec2_config.ini
               
               # Also create the symlink version
+              docker exec prefect-server mkdir -p /workspace/prefect/config
+              docker exec prefect-worker mkdir -p /workspace/prefect/config
               docker cp /tmp/container_ec2_config.ini prefect-server:/workspace/prefect/config/ec2_config.ini
               docker cp /tmp/container_ec2_config.ini prefect-worker:/workspace/prefect/config/ec2_config.ini
               rm /tmp/container_ec2_config.ini
@@ -452,18 +452,8 @@ EOF
               docker exec prefect-worker bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" >> /root/.bashrc'
               docker exec prefect-worker bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" > /etc/environment'
               
-              # Verify the config file exists in the expected location
+              # Verify config file existence
               docker exec prefect-server bash -c '[ -f /opt/prefect/config/ec2_config.ini ] && echo \"EC2 config found at /opt/prefect/config/ec2_config.ini\" || echo \"WARNING: EC2 config NOT found!\"'
-              
-              # Create directory structure expected by the utility function
-              docker exec prefect-server bash -c 'mkdir -p /workspace/prefect/config'
-              docker exec prefect-worker bash -c 'mkdir -p /workspace/prefect/config'
-              
-              # Create symbolic links from /workspace to /opt paths
-              docker exec prefect-server bash -c 'ln -sf /opt/prefect/config/ec2_config.ini /workspace/prefect/config/ec2_config.ini'
-              docker exec prefect-worker bash -c 'ln -sf /opt/prefect/config/ec2_config.ini /workspace/prefect/config/ec2_config.ini'
-              
-              # Verify the symbolic link is working
               docker exec prefect-server bash -c '[ -f /workspace/prefect/config/ec2_config.ini ] && echo \"EC2 config symlink is working!\" || echo \"ERROR: Symlink not working!\"; cat /workspace/prefect/config/ec2_config.ini'
             fi
             
@@ -479,43 +469,27 @@ EOF
               # Create work pool if it doesn't exist
               docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
               
-              # Deploy flow with improved flow function detection and correct environment variables
+              # Deploy flow with debugging of environment variables
               docker exec prefect-server bash -c \"cd /opt/prefect/flows && 
-                # Make sure environment variables are set before running anything
                 export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini &&
                 export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api &&
-                
-                # Print environment variables for debugging
-                echo 'Environment variables for deployment:' &&
+                echo 'ENV variables for deployment:' &&
                 echo \\\"KRONI_EC2_CONFIG: \\\$KRONI_EC2_CONFIG\\\" &&
-                echo \\\"PREFECT_API_URL: \\\$PREFECT_API_URL\\\" &&
                 
-                # Verify the EC2 config file exists
-                if [ -f \\\$KRONI_EC2_CONFIG ]; then
-                  echo 'EC2 config file found at: '\\\$KRONI_EC2_CONFIG &&
-                  echo 'EC2 config contents:' &&
-                  cat \\\$KRONI_EC2_CONFIG
-                else
-                  echo 'WARNING: EC2 config file not found at: '\\\$KRONI_EC2_CONFIG
-                fi &&
-                
-                # First find all @flow decorators and the function names that follow them
-                echo 'Analyzing \$(basename \$flow_file) for flow functions...' &&
+                # Check for flow function
                 FLOW_FUNCTIONS=\\\$(grep -B 1 -A 1 -E '@flow' \$(basename \$flow_file) | grep -E 'def\\s+[a-zA-Z0-9_]+\\(' | sed -E 's/.*def\\s+([a-zA-Z0-9_]+)\\(.*/\\1/g' | head -1) &&
-                echo 'Detected flow function: '\\\$FLOW_FUNCTIONS &&
                 
-                # If not found, try with server_monitoring_flow as fallback for backwards compatibility
+                # Try with server_monitoring_flow as fallback
                 if [ -z \\\"\\\$FLOW_FUNCTIONS\\\" ] && grep -q 'server_monitoring_flow' \$(basename \$flow_file); then
-                  echo 'Using fallback flow name: server_monitoring_flow' &&
-                  FLOW_FUNCTIONS='server_monitoring_flow'
+                  FLOW_FUNCTIONS='server_monitoring_flow';
                 fi &&
                 
-                # Deploy if we found a flow function
+                # Deploy if we found a flow
                 if [ -n \\\"\\\$FLOW_FUNCTIONS\\\" ]; then
-                  echo 'Deploying \$(basename \$flow_file):\\\$FLOW_FUNCTIONS...' &&
+                  echo 'Deploying \$(basename \$flow_file):\\\$FLOW_FUNCTIONS' &&
                   prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default --override-env-vars KRONI_EC2_CONFIG -v
-                else
-                  echo 'ERROR: No flow function found in \$(basename \$flow_file)'
+                else 
+                  echo 'No flow function found'
                 fi
               \"
             done
@@ -527,7 +501,7 @@ EOF
               docker-compose up -d prefect-worker
             fi
             
-            # Cleanup temporary SSH key
+            # Cleanup
             rm -rf /tmp/ssh_keys
           "
       
