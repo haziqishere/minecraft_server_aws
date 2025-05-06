@@ -372,13 +372,18 @@ jobs:
               
               # Set up SSH - use existing key from GitHub secrets
               echo 'Setting up SSH for containers...'
-              # Create SSH key from the GitHub secrets
-              echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
-              chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+              # Use the existing SSH key setup instead of creating a new one remotely
+              echo 'Using the SSH key already set up for the workflow...'
               
-              # Copy SSH key to containers
-              docker cp ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect-server:/root/.ssh/id_rsa
-              docker cp ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect-worker:/root/.ssh/id_rsa
+              # Create a temporary directory for SSH key on the remote machine
+              mkdir -p /tmp/ssh_keys
+              
+              # Copy the existing SSH key from GitHub runner to the EC2 instance temporarily
+              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }}:/tmp/ssh_keys/id_rsa
+              
+              # Copy the key to the containers
+              docker cp /tmp/ssh_keys/id_rsa prefect-server:/root/.ssh/id_rsa
+              docker cp /tmp/ssh_keys/id_rsa prefect-worker:/root/.ssh/id_rsa
               docker exec prefect-server chmod 600 /root/.ssh/id_rsa
               docker exec prefect-worker chmod 600 /root/.ssh/id_rsa
               
@@ -424,6 +429,9 @@ jobs:
               export PREFECT_HOST=${{ env.PREFECT_IP }}
               docker-compose up -d prefect-worker
             fi
+            
+            # Cleanup temporary SSH key
+            rm -rf /tmp/ssh_keys
           "
       
       # Output UI link
