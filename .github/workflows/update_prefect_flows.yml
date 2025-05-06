@@ -439,6 +439,17 @@ jobs:
               
               # Verify the config file exists in the expected location
               docker exec prefect-server bash -c '[ -f /opt/prefect/config/ec2_config.ini ] && echo \"EC2 config found at /opt/prefect/config/ec2_config.ini\" || echo \"WARNING: EC2 config NOT found!\"'
+              
+              # Create directory structure expected by the utility function
+              docker exec prefect-server bash -c 'mkdir -p /workspace/prefect/config'
+              docker exec prefect-worker bash -c 'mkdir -p /workspace/prefect/config'
+              
+              # Create symbolic links from /workspace to /opt paths
+              docker exec prefect-server bash -c 'ln -sf /opt/prefect/config/ec2_config.ini /workspace/prefect/config/ec2_config.ini'
+              docker exec prefect-worker bash -c 'ln -sf /opt/prefect/config/ec2_config.ini /workspace/prefect/config/ec2_config.ini'
+              
+              # Verify the symbolic link is working
+              docker exec prefect-server bash -c '[ -f /workspace/prefect/config/ec2_config.ini ] && echo \"EC2 config symlink is working!\" || echo \"ERROR: Symlink not working!\"; cat /workspace/prefect/config/ec2_config.ini'
             fi
             
             # For each flow file, copy to container and deploy
