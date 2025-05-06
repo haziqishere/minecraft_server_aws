@@ -31,13 +31,13 @@ DEFAULT_CONFIG = {
     "instance_name": "kroni-survival-server",
     "region": "ap-southeast-1",
     "discord_webhook_url": "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9",
-    "minecraft_container_name": "minecraft-server",
+    "minecraft_container_name": "itzg/minecraft-server:latest",
     "data_path": "/data",
     "world_path": "/data/world"
 }
 
 @task(name="Check Minecraft Server Status")
-def check_server_status(container_name: str = "minecraft-server") -> bool:
+def check_server_status(container_name: str = "itzg/minecraft-server:latest") -> bool:
     """Check if the Minecraft server is running"""
     logger = get_run_logger()
     logger.info(f"Checking Minecraft server status...")
