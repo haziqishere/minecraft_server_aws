@@ -189,38 +189,14 @@ jobs:
             echo "prefect.yaml already exists, preserving it"
           else
             echo "Creating default prefect.yaml file..."
-            # Create a default prefect.yaml file content
-            cat > /tmp/prefect.yaml << EOF
-# Prefect configuration
-prefect-version: null
-name: minecraft-automation
-
-# Define pull steps to run when deploying
-pull:
-  - prefect.deployments.steps.set_working_directory:
-      directory: /opt/prefect/flows
-
-# Define our deployments
-deployments:
-  - name: backup-flow
-    entrypoint: backup_flow.py:backup_flow
-    work_pool:
-      name: default
-  
-  - name: server-monitoring-flow
-    entrypoint: server_monitoring_flow.py:server_monitoring_flow
-    work_pool:
-      name: default
-  
-  - name: snapshot-flow
-    entrypoint: snapshot_flow.py:snapshot_flow
-    work_pool:
-      name: default
-EOF
-            
-            # Copy the default file to the server
-            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} /tmp/prefect.yaml ec2-user@${{ env.PREFECT_IP }}:~/prefect/prefect.yaml
-            echo "Default prefect.yaml created"
+            # Copy the template file to the server
+            if [ -f "prefect/prefect.yaml.template" ]; then
+              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/prefect.yaml.template ec2-user@${{ env.PREFECT_IP }}:~/prefect/prefect.yaml
+              echo "Default prefect.yaml created from template"
+            else
+              echo "Warning: Template file not found. Creating minimal prefect.yaml"
+              ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "echo 'name: minecraft-automation' > ~/prefect/prefect.yaml"
+            fi
           fi
       
       # Set PREFECT_HOST environment variable on the instance
