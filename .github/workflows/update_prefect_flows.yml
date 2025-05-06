@@ -420,12 +420,25 @@ jobs:
               docker exec prefect-server bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
               docker exec prefect-worker bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
               
-              # Update EC2 config to use localhost if not already
-              if grep -q \"^EC2_HOST=\" config/ec2_config.ini && ! grep -q \"^EC2_HOST=localhost\" config/ec2_config.ini; then
-                sed -i 's/^EC2_HOST=.*/EC2_HOST=localhost/' config/ec2_config.ini
-                docker cp config/ec2_config.ini prefect-server:/opt/prefect/config/
-                docker cp config/ec2_config.ini prefect-worker:/opt/prefect/config/
-              fi
+              # Always update EC2 config to use localhost
+              echo 'Creating optimal EC2 config for containers...'
+              cat > /tmp/container_ec2_config.ini << 'EOF'
+# EC2 instance connection details for container use
+EC2_HOST=localhost
+SSH_USER=ec2-user
+SSH_PORT=22
+
+# Monitor settings
+MONITOR_INTERVAL=300  # 5 minutes
+DISCORD_WEBHOOK_ENABLED=true
+EOF
+              docker cp /tmp/container_ec2_config.ini prefect-server:/opt/prefect/config/ec2_config.ini
+              docker cp /tmp/container_ec2_config.ini prefect-worker:/opt/prefect/config/ec2_config.ini
+              
+              # Also create the symlink version
+              docker cp /tmp/container_ec2_config.ini prefect-server:/workspace/prefect/config/ec2_config.ini
+              docker cp /tmp/container_ec2_config.ini prefect-worker:/workspace/prefect/config/ec2_config.ini
+              rm /tmp/container_ec2_config.ini
               
               # Test SSH connection
               echo 'Testing SSH connection from container...'
@@ -434,8 +447,10 @@ jobs:
               # Set environment variables including the EC2 config path
               docker exec prefect-server bash -c 'echo \"export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api\" >> /root/.bashrc'
               docker exec prefect-server bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" >> /root/.bashrc'
+              docker exec prefect-server bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" > /etc/environment'
               docker exec prefect-worker bash -c 'echo \"export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api\" >> /root/.bashrc'
               docker exec prefect-worker bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" >> /root/.bashrc'
+              docker exec prefect-worker bash -c 'echo \"export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini\" > /etc/environment'
               
               # Verify the config file exists in the expected location
               docker exec prefect-server bash -c '[ -f /opt/prefect/config/ec2_config.ini ] && echo \"EC2 config found at /opt/prefect/config/ec2_config.ini\" || echo \"WARNING: EC2 config NOT found!\"'
@@ -459,13 +474,31 @@ jobs:
               
               # Copy file to container
               echo \"Copying \$flow_file to container...\"
-              docker cp \$flow_file prefect-server:/opt/prefect/flows/\$(basename \$flow_file)
+              docker cp \$flow_file prefe ct-server:/opt/prefect/flows/\$(basename \$flow_file)
               
               # Create work pool if it doesn't exist
               docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
               
-              # Deploy flow with improved flow function detection
+              # Deploy flow with improved flow function detection and correct environment variables
               docker exec prefect-server bash -c \"cd /opt/prefect/flows && 
+                # Make sure environment variables are set before running anything
+                export KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini &&
+                export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api &&
+                
+                # Print environment variables for debugging
+                echo 'Environment variables for deployment:' &&
+                echo \\\"KRONI_EC2_CONFIG: \\\$KRONI_EC2_CONFIG\\\" &&
+                echo \\\"PREFECT_API_URL: \\\$PREFECT_API_URL\\\" &&
+                
+                # Verify the EC2 config file exists
+                if [ -f \\\$KRONI_EC2_CONFIG ]; then
+                  echo 'EC2 config file found at: '\\\$KRONI_EC2_CONFIG &&
+                  echo 'EC2 config contents:' &&
+                  cat \\\$KRONI_EC2_CONFIG
+                else
+                  echo 'WARNING: EC2 config file not found at: '\\\$KRONI_EC2_CONFIG
+                fi &&
+                
                 # First find all @flow decorators and the function names that follow them
                 echo 'Analyzing \$(basename \$flow_file) for flow functions...' &&
                 FLOW_FUNCTIONS=\\\$(grep -B 1 -A 1 -E '@flow' \$(basename \$flow_file) | grep -E 'def\\s+[a-zA-Z0-9_]+\\(' | sed -E 's/.*def\\s+([a-zA-Z0-9_]+)\\(.*/\\1/g' | head -1) &&
@@ -480,7 +513,7 @@ jobs:
                 # Deploy if we found a flow function
                 if [ -n \\\"\\\$FLOW_FUNCTIONS\\\" ]; then
                   echo 'Deploying \$(basename \$flow_file):\\\$FLOW_FUNCTIONS...' &&
-                  PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api KRONI_EC2_CONFIG=/opt/prefect/config/ec2_config.ini prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default --override-env-vars KRONI_EC2_CONFIG
+                  prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default --override-env-vars KRONI_EC2_CONFIG -v
                 else
                   echo 'ERROR: No flow function found in \$(basename \$flow_file)'
                 fi

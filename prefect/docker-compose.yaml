@@ -18,8 +18,10 @@ services:
       - prefect-data:/root/.prefect
       - ./flows:/opt/prefect/flows
       - ${HOME}/.aws:/root/.aws:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
       - ./utils:/opt/prefect/utils
       - ./config:/opt/prefect/config
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Internal URLs for server use - inside container
       - PREFECT_API_URL=http://0.0.0.0:4200/api
@@ -50,6 +52,7 @@ services:
       - ${HOME}/.ssh:/root/.ssh:ro
       - ./utils:/opt/prefect/utils
       - ./config:/opt/prefect/config
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Use the IP address instead of hostname - needs to be accessible from worker
       - PREFECT_API_URL=http://172.28.0.2:4200/api

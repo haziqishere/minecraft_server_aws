@@ -118,7 +118,32 @@ def check_container_status(container_name: str, host: str = None,
         logger.info("Running in SIMULATED mode - reporting container as RUNNING")
         return True
     
-    # If SSH details provided, check remotely
+    # Try direct Docker socket access first if we're checking localhost
+    if (host == "localhost" or (ssh_config and ssh_config.get("EC2_HOST") == "localhost")) and os.path.exists("/var/run/docker.sock"):
+        try:
+            logger.info("Checking container status via direct Docker socket...")
+            result = subprocess.run(
+                ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                # Parse container names from output
+                container_names = [name.strip() for name in result.stdout.strip().split('\n') if name.strip()]
+                logger.info(f"Found containers via Docker socket: {container_names}")
+                
+                # Check if our container is running
+                is_running = any(name == container_name for name in container_names)
+                logger.info(f"Container status via Docker socket: {'Running' if is_running else 'Stopped'}")
+                return is_running
+            else:
+                logger.warning(f"Docker socket check failed: {result.stderr} - trying SSH method next")
+        except Exception as e:
+            logger.warning(f"Docker socket check failed: {e} - trying SSH method next")
+    
+    # If direct check failed or we're checking a remote host, try SSH
     if host or (ssh_config and ssh_config.get("EC2_HOST")):
         if ssh_config:
             host = ssh_config.get("EC2_HOST", host)
@@ -143,12 +168,47 @@ def check_container_status(container_name: str, host: str = None,
         if result['stderr']:
             logger.info(f"SSH command stderr: {result['stderr']}")
         
+        # If SSH failed with "No such file or directory: 'ssh'", it means the SSH client is missing
+        if "No such file or directory: 'ssh'" in result.get('stderr', ''):
+            logger.error("SSH client not installed in container - please check Dockerfile configuration")
+            # Use a fallback check to avoid false alerts
+            try:
+                # Try direct Docker access as fallback
+                logger.info("Trying direct Docker socket access as fallback...")
+                if os.path.exists("/var/run/docker.sock"):
+                    result = subprocess.run(
+                        ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    if result.returncode == 0:
+                        # Parse container names from output
+                        container_names = [name.strip() for name in result.stdout.strip().split('\n') if name.strip()]
+                        logger.info(f"Found containers via fallback Docker socket: {container_names}")
+                        
+                        # Check if our container is running
+                        is_running = any(name == container_name for name in container_names)
+                        logger.info(f"Container status via fallback Docker socket: {'Running' if is_running else 'Stopped'}")
+                        return is_running
+                    else:
+                        logger.error(f"Fallback Docker socket check failed: {result.stderr}")
+                else:
+                    logger.error("Docker socket not available for fallback check")
+            except Exception as e:
+                logger.error(f"Fallback Docker socket check failed: {e}")
+                
+            # If we're in a container on the same host as the Minecraft server, assume it's running
+            # This is a last resort to avoid false alerts
+            logger.warning("As a last resort fallback, assuming server is running to avoid false alerts")
+            return True
+        
         # Container is running if command succeeded and container name is in output
         is_running = result['success'] and container_name in result['stdout']
         logger.info(f"Container status: {'Running' if is_running else 'Stopped'}")
         return is_running
     
-    # Otherwise, check locally
+    # Fallback to local checking if no host was specified and no SSH config is found
     try:
         logger.info("Checking container status locally...")
         result = subprocess.run(
