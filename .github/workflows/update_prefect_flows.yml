@@ -345,7 +345,7 @@ jobs:
           chmod +x check_flows.sh
           ./check_flows.sh $FLOW_FILES
       
-      # Register/update flows
+      # Deploy flows and configure containers
       - name: Deploy flows and configure containers
         run: |
           echo "Deploying flows and configuring containers on ${{ env.PREFECT_IP }}..."
@@ -361,14 +361,41 @@ jobs:
               echo 'deploy_flows.sh not found or not executable, using standard flow registration...'
               
               # Create directories in containers
-              docker exec prefect-server mkdir -p /opt/prefect/utils /opt/prefect/config
-              docker exec prefect-worker mkdir -p /opt/prefect/utils /opt/prefect/config
+              docker exec prefect-server mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh
+              docker exec prefect-worker mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh
               
               # Copy config and utils to containers
               docker cp config/ec2_config.ini prefect-server:/opt/prefect/config/
               docker cp config/ec2_config.ini prefect-worker:/opt/prefect/config/
               docker cp utils/server_utils.py prefect-server:/opt/prefect/utils/
               docker cp utils/server_utils.py prefect-worker:/opt/prefect/utils/
+              
+              # Set up SSH - use existing key from GitHub secrets
+              echo 'Setting up SSH for containers...'
+              # Create SSH key from the GitHub secrets
+              echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+              chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
+              
+              # Copy SSH key to containers
+              docker cp ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect-server:/root/.ssh/id_rsa
+              docker cp ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect-worker:/root/.ssh/id_rsa
+              docker exec prefect-server chmod 600 /root/.ssh/id_rsa
+              docker exec prefect-worker chmod 600 /root/.ssh/id_rsa
+              
+              # Add localhost to known_hosts
+              docker exec prefect-server bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
+              docker exec prefect-worker bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
+              
+              # Update EC2 config to use localhost if not already
+              if grep -q \"^EC2_HOST=\" config/ec2_config.ini && ! grep -q \"^EC2_HOST=localhost\" config/ec2_config.ini; then
+                sed -i 's/^EC2_HOST=.*/EC2_HOST=localhost/' config/ec2_config.ini
+                docker cp config/ec2_config.ini prefect-server:/opt/prefect/config/
+                docker cp config/ec2_config.ini prefect-worker:/opt/prefect/config/
+              fi
+              
+              # Test SSH connection
+              echo 'Testing SSH connection from container...'
+              docker exec prefect-server ssh -o BatchMode=yes -o ConnectTimeout=5 ec2-user@localhost \"echo SSH test successful from container\"
               
               # Set environment variables
               docker exec prefect-server bash -c 'echo \"export PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api\" >> /root/.bashrc'
