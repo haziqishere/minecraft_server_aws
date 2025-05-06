@@ -180,12 +180,17 @@ jobs:
           "
       
       # Create prefect.yaml file on instance if it doesn't exist
-      - name: Create prefect.yaml
+      - name: Create or update prefect.yaml
         run: |
-          echo "Creating prefect.yaml file if needed on ${{ env.PREFECT_IP }}..."
+          echo "Checking prefect.yaml file on ${{ env.PREFECT_IP }}..."
           
-          # Create a temporary prefect.yaml file locally
-          cat > /tmp/prefect.yaml << 'EOL'
+          # Check if prefect.yaml already exists on the server
+          if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "test -f ~/prefect/prefect.yaml"; then
+            echo "prefect.yaml already exists, preserving it"
+          else
+            echo "Creating default prefect.yaml file..."
+            # Create a default prefect.yaml file content
+            cat > /tmp/prefect.yaml << EOF
 # Prefect configuration
 prefect-version: null
 name: minecraft-automation
@@ -211,20 +216,12 @@ deployments:
     entrypoint: snapshot_flow.py:snapshot_flow
     work_pool:
       name: default
-EOL
-          
-          # Copy to the remote server
-          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} /tmp/prefect.yaml ec2-user@${{ env.PREFECT_IP }}:/tmp/prefect.yaml
-          
-          # Move it if it doesn't exist
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
-            if [ ! -f ~/prefect/prefect.yaml ]; then
-              echo 'Creating prefect.yaml file'
-              mv /tmp/prefect.yaml ~/prefect/prefect.yaml
-            else
-              echo 'prefect.yaml already exists, skipping'
-            fi
-          "
+EOF
+            
+            # Copy the default file to the server
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} /tmp/prefect.yaml ec2-user@${{ env.PREFECT_IP }}:~/prefect/prefect.yaml
+            echo "Default prefect.yaml created"
+          fi
       
       # Set PREFECT_HOST environment variable on the instance
       - name: Set PREFECT_HOST
