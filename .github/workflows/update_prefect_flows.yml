@@ -207,19 +207,26 @@ jobs:
         run: |
           echo "Installing Python dependencies in Prefect containers..."
           ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+            # Install dependencies from requirements.txt in the EC2 home directory
             if [ -f ~/prefect/requirements.txt ]; then
-              echo 'Installing dependencies in prefect-server container...'
+              echo 'Installing dependencies from requirements.txt...'
               docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
               docker exec prefect-server pip install -r /tmp/requirements.txt
-              
-              echo 'Installing dependencies in prefect-worker container...'
               docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
               docker exec prefect-worker pip install -r /tmp/requirements.txt
               
-              echo 'Dependencies installed successfully'
+              # Verify dependency installation
+              echo 'Verifying key package installation:'
+              docker exec prefect-server pip list | grep -E 'psutil|paramiko'
+              docker exec prefect-worker pip list | grep -E 'psutil|paramiko'
             else
-              echo 'requirements.txt not found, skipping dependency installation'
+              echo 'ERROR: requirements.txt not found! Cannot set up containers properly.'
+              echo 'Please ensure requirements.txt exists in the prefect directory.'
+              exit 1
             fi
+            
+            # We've verified the packages are installed from requirements.txt
+            # No fallback installations needed
 
             # Set up the Prefect containers with proper configuration files
             if [ -f ~/prefect/bin/setup_prefect_containers.sh ]; then
@@ -361,8 +368,26 @@ jobs:
               echo 'deploy_flows.sh not found or not executable, using standard flow registration...'
               
               # Create directories in containers
-              docker exec prefect-server mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh
-              docker exec prefect-worker mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh
+              docker exec prefect-server mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh /opt/prefect/flows
+              docker exec prefect-worker mkdir -p /opt/prefect/utils /opt/prefect/config /root/.ssh /opt/prefect/flows
+              
+              # Install dependencies FIRST before anything else
+              if [ -f ~/prefect/requirements.txt ]; then
+                echo 'Installing dependencies from requirements.txt...'
+                docker cp ~/prefect/requirements.txt prefect-server:/tmp/requirements.txt
+                docker exec prefect-server pip install -r /tmp/requirements.txt
+                docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
+                docker exec prefect-worker pip install -r /tmp/requirements.txt
+                
+                # Verify dependency installation
+                echo 'Verifying key package installation:'
+                docker exec prefect-server pip list | grep -E 'psutil|paramiko'
+                docker exec prefect-worker pip list | grep -E 'psutil|paramiko'
+              else
+                echo 'ERROR: requirements.txt not found! Cannot set up containers properly.'
+                echo 'Please ensure requirements.txt exists in the prefect directory.'
+                exit 1
+              fi
               
               # Copy config and utils to containers
               docker cp config/ec2_config.ini prefect-server:/opt/prefect/config/
@@ -370,22 +395,26 @@ jobs:
               docker cp utils/server_utils.py prefect-server:/opt/prefect/utils/
               docker cp utils/server_utils.py prefect-worker:/opt/prefect/utils/
               
-              # Set up SSH - use existing key from GitHub secrets
+              # Set up SSH in the containers
               echo 'Setting up SSH for containers...'
-              # Use the existing SSH key setup instead of creating a new one remotely
-              echo 'Using the SSH key already set up for the workflow...'
               
-              # Create a temporary directory for SSH key on the remote machine
+              # Create a new SSH key pair on the EC2 host for container use
+              rm -rf /tmp/ssh_keys
               mkdir -p /tmp/ssh_keys
-              
-              # Copy the existing SSH key from GitHub runner to the EC2 instance temporarily
-              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }}:/tmp/ssh_keys/id_rsa
+              chmod 700 /tmp/ssh_keys
+              ssh-keygen -t rsa -f /tmp/ssh_keys/id_rsa -N \"\" -C \"prefect_container_key\"
+              cat /tmp/ssh_keys/id_rsa.pub >> ~/.ssh/authorized_keys
               
               # Copy the key to the containers
               docker cp /tmp/ssh_keys/id_rsa prefect-server:/root/.ssh/id_rsa
               docker cp /tmp/ssh_keys/id_rsa prefect-worker:/root/.ssh/id_rsa
               docker exec prefect-server chmod 600 /root/.ssh/id_rsa
               docker exec prefect-worker chmod 600 /root/.ssh/id_rsa
+              
+              # Verify SSH keys exists in containers
+              echo 'Verifying SSH key setup:'
+              docker exec prefect-server ls -la /root/.ssh/
+              docker exec prefect-worker ls -la /root/.ssh/
               
               # Add localhost to known_hosts
               docker exec prefect-server bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
@@ -419,8 +448,8 @@ jobs:
               # Create work pool if it doesn't exist
               docker exec prefect-server bash -c 'prefect work-pool create default -t process || echo \"Work pool already exists\"'
               
-              # Deploy flow
-              docker exec prefect-server bash -c \"cd /opt/prefect/flows && PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api prefect deploy \$(basename \$flow_file):server_monitoring_flow -n monitoring-deployment --pool default || echo 'Flow deployment failed'\"
+              # Deploy flow - using proper flow name detection
+              docker exec prefect-server bash -c \"cd /opt/prefect/flows && FLOW_FUNCTIONS=\\\$(grep -E '@flow' \$(basename \$flow_file) | grep -A 1 '@flow' | grep 'def' | awk '{print \\\$2}' | cut -d'(' -f1 | head -1) && if [ -n \\\"\\\$FLOW_FUNCTIONS\\\" ]; then PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api prefect deploy \$(basename \$flow_file):\\\$FLOW_FUNCTIONS -n \\\${FLOW_FUNCTIONS}-deployment --pool default; else echo 'No flow function found in \$(basename \$flow_file)'; fi || echo 'Flow deployment failed'\"
             done
             
             # Ensure worker is running
