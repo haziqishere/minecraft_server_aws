@@ -64,3 +64,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Local testing env
+**/.devcontainer/

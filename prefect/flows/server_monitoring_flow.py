@@ -13,18 +13,26 @@ Run this script directly to execute the flow or schedule with Prefect
 
 import os
 import sys
-import subprocess
 import datetime
 import json
 import time
 import platform
 import psutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 # Import Prefect modules
 from prefect import flow, task, get_run_logger
 import requests
+
+# Import utility functions
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.server_utils import (
+    get_ec2_config,
+    check_container_status,
+    get_directory_size,
+    get_system_metrics_remote
+)
 
 # Default config
 DEFAULT_CONFIG = {
@@ -41,49 +49,34 @@ def check_server_status(container_name: str = "minecraft-server") -> bool:
     """Check if the Minecraft server is running"""
     logger = get_run_logger()
     logger.info(f"Checking Minecraft server status...")
-    try:
-        # Use a more reliable approach to check if the container is running
-        result = subprocess.run(
-            ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        
-        # Clean up the output to handle potential whitespace or line breaks
-        container_names = [name.strip() for name in result.stdout.strip().split('\n') if name.strip()]
-        logger.info(f"Found running containers: {container_names}")
-        
-        # Check if any of the found container names match our target
-        is_running = any(name == container_name for name in container_names)
-        
-        # Also log the raw output for debugging
-        logger.info(f"Raw docker ps output: '{result.stdout}'")
-        logger.info(f"Minecraft server status: {'Running' if is_running else 'Stopped'}")
-        
-        # Alternative approach in case format doesn't work well
-        if not is_running:
-            # Try another approach without formatting
-            alt_result = subprocess.run(
-                ["docker", "ps", "--filter", f"name={container_name}"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            # If container name appears in the output and it's not just in the column headers
-            is_running = container_name in alt_result.stdout and len(alt_result.stdout.strip().split('\n')) > 1
-            logger.info(f"Alternative check result: {'Running' if is_running else 'Stopped'}")
-        
-        return is_running
-    except Exception as e:
-        logger.error(f"Failed to check server status: {e}")
-        return False
+    
+    # Get EC2 config if we're in remote mode
+    if os.environ.get("KRONI_DEV_MODE", "").lower() == "true":
+        ec2_config = get_ec2_config()
+        return check_container_status(container_name, ssh_config=ec2_config, logger=logger)
+    
+    # Otherwise check locally
+    return check_container_status(container_name, logger=logger)
 
 @task(name="Get System Metrics")
 def get_system_metrics() -> Dict:
     """Collect system metrics including CPU, memory, and disk usage"""
     logger = get_run_logger()
     logger.info(f"Collecting system metrics...")
+    
+    # Check if we're in remote mode
+    if os.environ.get("KRONI_DEV_MODE", "").lower() == "true":
+        ec2_config = get_ec2_config()
+        host = ec2_config.get("EC2_HOST")
+        user = ec2_config.get("SSH_USER")
+        port = ec2_config.get("SSH_PORT", "22")
+        
+        # If we have EC2 details, get metrics remotely
+        if host and user:
+            logger.info(f"Getting system metrics from remote host {host}")
+            return get_system_metrics_remote(host, user, port)
+    
+    # Otherwise get metrics locally
     try:
         # Get CPU usage
         cpu_percent = psutil.cpu_percent(interval=1)
@@ -112,6 +105,7 @@ def get_system_metrics() -> Dict:
         # Docker stats for Minecraft container
         docker_stats = None
         try:
+            import subprocess
             result = subprocess.run(
                 ["docker", "stats", "--no-stream", "--format", "{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}}"],
                 capture_output=True,
@@ -173,30 +167,9 @@ def get_system_metrics() -> Dict:
 def get_world_size(world_path: str) -> Optional[float]:
     """Get the size of the Minecraft world directory in GB"""
     logger = get_run_logger()
-    logger.info(f"Calculating world size at {world_path}...")
-    try:
-        world_dir = Path(world_path)
-        
-        if not world_dir.exists():
-            logger.error(f"World directory {world_path} does not exist!")
-            return None
-        
-        # Get total size of world directory
-        total_size = 0
-        for dirpath, dirnames, filenames in os.walk(world_dir):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
-                if os.path.exists(fp):  # Skip if file doesn't exist
-                    total_size += os.path.getsize(fp)
-        
-        # Convert to GB
-        size_gb = total_size / (1024 * 1024 * 1024)
-        logger.info(f"Minecraft world size: {size_gb:.2f} GB")
-        return round(size_gb, 2)
     
-    except Exception as e:
-        logger.error(f"Failed to get world size: {e}")
-        return None
+    # Use the utility function to get world size
+    return get_directory_size(world_path)
 
 @task(name="Send Discord Notification")
 def send_metrics_to_discord(
@@ -236,6 +209,17 @@ def send_metrics_to_discord(
         # Format timestamp
         timestamp = datetime.datetime.now().isoformat()
         
+        # Ensure all values are of the right types for formatting
+        cpu_value = f"{float(cpu_percent):.1f}%" if isinstance(cpu_percent, (int, float)) else cpu_percent
+        memory_used = metrics["system"]["memory_used_mb"]
+        memory_used_str = f"{float(memory_used):.0f}" if isinstance(memory_used, (int, float)) else memory_used
+        memory_value = f"{float(memory_percent):.1f}% ({memory_used_str} MB)"
+        
+        disk_percent_value = float(disk_percent) if isinstance(disk_percent, (int, float)) else float(disk_percent.replace('%', ''))
+        disk_used = metrics["system"]["root_disk_used_gb"]
+        disk_used_str = disk_used if isinstance(disk_used, str) else f"{float(disk_used):.1f}"
+        disk_value = f"{disk_percent_value:.1f}% ({disk_used_str} GB)"
+        
         # Build fields
         fields = [
             {
@@ -250,26 +234,31 @@ def send_metrics_to_discord(
             },
             {
                 "name": "CPU Usage",
-                "value": f"{cpu_percent:.1f}%",
+                "value": cpu_value,
                 "inline": True
             },
             {
                 "name": "Memory Usage",
-                "value": f"{memory_percent:.1f}% ({metrics['system']['memory_used_mb']:.0f} MB)",
+                "value": memory_value,
                 "inline": True
             },
             {
                 "name": "Root Disk Usage",
-                "value": f"{disk_percent:.1f}% ({metrics['system']['root_disk_used_gb']:.1f} GB)",
+                "value": disk_value,
                 "inline": True
             }
         ]
         
         # Add data disk if available
         if "data_disk_percent" in metrics["system"]:
+            data_percent = metrics["system"]["data_disk_percent"]
+            data_used = metrics["system"]["data_disk_used_gb"]
+            data_used_str = data_used if isinstance(data_used, str) else f"{float(data_used):.1f}"
+            data_percent_value = float(data_percent) if isinstance(data_percent, (int, float)) else float(data_percent.replace('%', ''))
+            
             fields.append({
                 "name": "Data Disk Usage",
-                "value": f"{metrics['system']['data_disk_percent']:.1f}% ({metrics['system']['data_disk_used_gb']:.1f} GB)",
+                "value": f"{data_percent_value:.1f}% ({data_used_str} GB)",
                 "inline": True
             })
         
@@ -283,9 +272,12 @@ def send_metrics_to_discord(
         
         # Add load averages if available
         if "load_avg_1min" in metrics["system"]:
+            load1 = metrics["system"]["load_avg_1min"]
+            load5 = metrics["system"]["load_avg_5min"]
+            load15 = metrics["system"]["load_avg_15min"]
             fields.append({
                 "name": "Load Average",
-                "value": f"{metrics['system']['load_avg_1min']:.2f}, {metrics['system']['load_avg_5min']:.2f}, {metrics['system']['load_avg_15min']:.2f}",
+                "value": f"{load1:.2f}, {load5:.2f}, {load15:.2f}",
                 "inline": True
             })
         
@@ -360,12 +352,13 @@ def server_monitoring_flow(config: Optional[Dict] = None):
         world_size = get_world_size(cfg["world_path"])
         
         # Send metrics to Discord
-        send_metrics_to_discord(
-            cfg["discord_webhook_url"],
-            metrics,
-            world_size,
-            server_running
-        )
+        if os.environ.get("DISCORD_WEBHOOK_ENABLED", "true").lower() == "true":
+            send_metrics_to_discord(
+                cfg["discord_webhook_url"],
+                metrics,
+                world_size,
+                server_running
+            )
         
         logger.info("Server monitoring flow completed successfully")
         return "SUCCESS"

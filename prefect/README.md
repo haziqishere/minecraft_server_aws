@@ -1,103 +1,104 @@
-# Minecraft Server Prefect Automation
+# Kroni Survival Minecraft Server Monitoring
 
-This directory contains Prefect flows and deployment configurations for automating the Minecraft server.
+This module provides a comprehensive monitoring solution for the Kroni Survival Minecraft server running on AWS EC2. It collects server metrics, checks the Minecraft server status, tracks world size growth, and sends notifications to a Discord webhook.
 
-## Overview
+## Directory Structure
 
-The Prefect setup consists of:
-
-- **prefect-server**: Runs the Prefect UI and API (using official Prefect 3.x image)
-- **prefect-worker**: Executes the scheduled flows
-- **flows/**: Python scripts containing the flow definitions
-- **helper scripts**: To make deployment and updates easier
-
-## Flows
-
-The main flows are:
-
-1. **backup_flow.py**: Creates backups of the Minecraft world and uploads them to S3
-2. **server_monitoring_flow.py**: Monitors server health and sends alerts
-3. **snapshot_flow.py**: Creates scheduled snapshots of the AWS Lightsail instance
-
-## Deployment
-
-### Initial Deployment
-
-To set up Prefect for the first time:
-
-```bash
-# Deploy Prefect server and worker
-./deploy_prefect.sh deploy
-
-# Register all flows with Prefect
-./deploy_prefect.sh register
+```
+prefect/
+├── bin/                   # Executable scripts
+│   ├── deploy_monitoring.sh    # Deploy monitoring flow to Prefect
+│   ├── setup_ec2_auth.sh       # Configure SSH access to EC2
+│   └── test_monitoring.sh      # Run monitoring in test mode
+├── config/                # Configuration files
+│   └── ec2_config.ini     # EC2 connection settings
+├── flows/                 # Prefect flow definitions
+│   └── server_monitoring_flow.py  # Main monitoring flow
+└── utils/                 # Utility modules
+    └── server_utils.py    # Common utility functions
 ```
 
-### Updating Flows
+## Setup Instructions
 
-You can update flow files without rebuilding the Docker image:
+### 1. Setting up SSH Authentication to EC2
 
-**Option 1: Using the update-flows command:**
-
-```bash
-# Update all flows
-./deploy_prefect.sh update-flows
-
-# Update a specific flow
-./deploy_prefect.sh update-flows backup_flow.py
-```
-
-**Option 2: Using the dedicated helper scripts:**
+To monitor your EC2 instance, you need to set up SSH key-based authentication:
 
 ```bash
-# Update a single flow
-./update_flow.sh backup_flow.py
-
-# Update all flows
-./update_all_flows.sh
+cd prefect/bin
+./setup_ec2_auth.sh path/to/your/ec2-key.pem 52.220.65.112 ec2-user
 ```
 
-**Option 3: Using GitHub Actions workflow:**
+Replace the parameters with your actual EC2 key file path, instance IP, and username.
 
-Push changes to the `prefect/flows/` directory in the repository, and the GitHub Actions workflow will automatically update the flows on the server.
+### 2. Testing the Monitoring
 
-You can also manually trigger the workflow in the GitHub Actions UI and specify a specific flow to update.
-
-## Managing Prefect
+To test the monitoring flow without actually connecting to EC2:
 
 ```bash
-# Check status
-./deploy_prefect.sh status
-
-# View logs
-./deploy_prefect.sh logs
-
-# View logs for a specific service
-./deploy_prefect.sh logs server
-./deploy_prefect.sh logs worker
-
-# Restart services
-./deploy_prefect.sh restart
+cd prefect/bin
+./test_monitoring.sh
 ```
 
-## Prefect UI
+This will run in simulation mode and send a test notification to Discord.
 
-The Prefect UI is available at:
-- Local: http://localhost:4200
-- Server: http://<server-ip>:4200
+### 3. Deploying the Monitoring Flow
+
+To deploy the monitoring flow to Prefect and schedule it:
+
+```bash
+cd prefect/bin
+./deploy_monitoring.sh --interval 300
+```
+
+This deploys the flow to run every 5 minutes (300 seconds).
+
+## Usage
+
+### Running manually
+
+```bash
+cd prefect/flows
+export KRONI_DEV_MODE=true
+python server_monitoring_flow.py
+```
+
+### Running a deployed flow
+
+```bash
+prefect deployment run "Kroni Survival Server Monitoring/production"
+```
 
 ## Configuration
 
-The Prefect server and worker configuration is defined in:
-- `docker-compose.yaml`: Container configuration using official Prefect image
-- `prefect.yaml`: Deployment configuration
-- Flow scripts with `@flow` decorated functions
+The monitoring flow is configured through environment variables and the config file. The key environment variables are:
+
+- `KRONI_DEV_MODE`: Set to "true" to enable remote monitoring mode
+- `KRONI_EC2_CONFIG`: Path to the EC2 configuration file
+- `KRONI_SIMULATED_MODE`: Set to "true" to run in simulation mode (for testing)
 
 ## Troubleshooting
 
-If you encounter flow deployment issues, check:
+### SSH Connection Issues
 
-1. **Flow Function Names**: Make sure your flow files have functions decorated with `@flow` that match the deployment configuration
-2. **Worker Status**: Ensure a worker is running with `docker ps | grep prefect-worker`
-3. **Server Logs**: Check server logs with `./deploy_prefect.sh logs server`
-4. **Worker Logs**: Check worker logs with `./deploy_prefect.sh logs worker` 
+If you're having trouble connecting to your EC2 instance:
+
+1. Make sure your key file has the correct permissions (`chmod 600 key.pem`)
+2. Verify that your EC2 instance's security group allows SSH from your IP
+3. Check that the EC2 user has permissions to run Docker commands
+
+### Discord Webhook Issues
+
+If Discord notifications aren't working:
+
+1. Verify your webhook URL is correct
+2. Make sure `DISCORD_WEBHOOK_ENABLED` is set to "true" in your config
+3. Check network connectivity to Discord's servers
+
+## Contributing
+
+When extending this monitoring system:
+
+1. Add new metrics in `server_utils.py`
+2. Update the `server_monitoring_flow.py` to use your new metrics
+3. Test thoroughly with `test_monitoring.sh` before deploying 
