@@ -84,6 +84,38 @@ Kroni Survival is a Minecraft server deployment solution that provides:
 └── .env.example             # Example environment variables
 
 - Discord webhook URL (for notification)
+
+# Minecraft Server Monitoring
+
+## Prefect Monitoring System
+
+This repository contains a Prefect-based monitoring system for Minecraft servers running on AWS EC2. The system:
+
+1. Checks if the Minecraft server is running
+2. Collects system metrics (CPU, memory, disk usage)
+3. Measures world size growth
+4. Sends notifications to Discord
+
+For detailed setup and usage instructions, see [prefect/README.md](prefect/README.md).
+
+### Quick Start
+
+For a guided setup process, use the quick setup script:
+
+```bash
+cd prefect
+./quick_setup.sh
+```
+
+Or for manual setup:
+
+```bash
+# Set up SSH authentication
+cd prefect/bin
+./setup_ec2_auth.sh <path_to_key.pem> <ec2_ip> ec2-user
+
+# Deploy the monitoring flow
+./deploy_monitoring.sh
 ```
 
 ## Deployment Instructions

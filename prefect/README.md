@@ -1,104 +1,112 @@
-# Kroni Survival Minecraft Server Monitoring
+# Minecraft Server Monitoring with Prefect
 
-This module provides a comprehensive monitoring solution for the Kroni Survival Minecraft server running on AWS EC2. It collects server metrics, checks the Minecraft server status, tracks world size growth, and sends notifications to a Discord webhook.
+This directory contains the Prefect workflows for monitoring the Minecraft server.
+
+## Quick Setup
+
+For a guided setup process, run the quick setup script:
+
+```bash
+./quick_setup.sh
+```
+
+This script will:
+1. Configure SSH access to your EC2 instance
+2. Check and start Prefect server if needed
+3. Deploy the monitoring flow
+4. Run a test to verify everything works
 
 ## Directory Structure
 
-```
-prefect/
-├── bin/                   # Executable scripts
-│   ├── deploy_monitoring.sh    # Deploy monitoring flow to Prefect
-│   ├── setup_ec2_auth.sh       # Configure SSH access to EC2
-│   └── test_monitoring.sh      # Run monitoring in test mode
-├── config/                # Configuration files
-│   └── ec2_config.ini     # EC2 connection settings
-├── flows/                 # Prefect flow definitions
-│   └── server_monitoring_flow.py  # Main monitoring flow
-└── utils/                 # Utility modules
-    └── server_utils.py    # Common utility functions
-```
+- `bin/` - Utility scripts for deployment and setup
+- `config/` - Configuration files for EC2 and Prefect
+- `flows/` - Prefect workflow definitions
+- `utils/` - Utility modules used by the flows
 
-## Setup Instructions
+## Key Scripts
 
-### 1. Setting up SSH Authentication to EC2
+### Setup and Deployment
 
-To monitor your EC2 instance, you need to set up SSH key-based authentication:
+- **`bin/setup_ec2_auth.sh`**: Set up SSH key-based authentication to connect to the EC2 instance.
+  ```
+  ./bin/setup_ec2_auth.sh <path/to/key.pem> <ec2_hostname> <ssh_user>
+  ```
 
-```bash
-cd prefect/bin
-./setup_ec2_auth.sh path/to/your/ec2-key.pem 52.220.65.112 ec2-user
-```
+- **`bin/deploy_monitoring.sh`**: Deploy the server monitoring flow to Prefect.
+  ```
+  ./bin/deploy_monitoring.sh [--interval 300] [--name production]
+  ```
+  This script also sets up the Prefect containers with the proper SSH configuration.
 
-Replace the parameters with your actual EC2 key file path, instance IP, and username.
+- **`deploy_prefect.sh`**: Deploy and manage the Prefect server itself.
+  ```
+  ./deploy_prefect.sh [deploy|status|logs|restart|register]
+  ```
 
-### 2. Testing the Monitoring
+### Testing and Troubleshooting
 
-To test the monitoring flow without actually connecting to EC2:
+- **`bin/test_monitoring.sh`**: Run the monitoring flow in simulation mode for testing.
+  ```
+  ./bin/test_monitoring.sh
+  ```
 
-```bash
-cd prefect/bin
-./test_monitoring.sh
-```
+- **`bin/config_check.py`**: Check the configuration and verify SSH connectivity.
+  ```
+  python bin/config_check.py
+  ```
 
-This will run in simulation mode and send a test notification to Discord.
+## Common Tasks
 
-### 3. Deploying the Monitoring Flow
+### First-time Setup
 
-To deploy the monitoring flow to Prefect and schedule it:
+1. Set up SSH authentication for the EC2 instance:
+   ```
+   ./bin/setup_ec2_auth.sh ~/Downloads/minecraft-key.pem 52.220.65.112 ec2-user
+   ```
 
-```bash
-cd prefect/bin
-./deploy_monitoring.sh --interval 300
-```
+2. Deploy the Prefect server (if not already running):
+   ```
+   ./deploy_prefect.sh deploy
+   ```
 
-This deploys the flow to run every 5 minutes (300 seconds).
+3. Deploy the monitoring flow:
+   ```
+   ./bin/deploy_monitoring.sh
+   ```
 
-## Usage
+### Checking Status
 
-### Running manually
+- Check Prefect server status:
+  ```
+  ./deploy_prefect.sh status
+  ```
 
-```bash
-cd prefect/flows
-export KRONI_DEV_MODE=true
-python server_monitoring_flow.py
-```
+- Run the monitoring flow manually:
+  ```
+  prefect deployment run "Kroni Survival Server Monitoring/production"
+  ```
 
-### Running a deployed flow
+### Troubleshooting
 
-```bash
-prefect deployment run "Kroni Survival Server Monitoring/production"
-```
+If the monitoring flow is not detecting the Minecraft server correctly:
 
-## Configuration
+1. Verify SSH connectivity:
+   ```
+   python bin/config_check.py
+   ```
 
-The monitoring flow is configured through environment variables and the config file. The key environment variables are:
+2. Check for proper container configuration:
+   ```
+   docker exec prefect-worker ls -la /opt/prefect/config/
+   docker exec prefect-worker ls -la /root/.ssh/
+   ```
 
-- `KRONI_DEV_MODE`: Set to "true" to enable remote monitoring mode
-- `KRONI_EC2_CONFIG`: Path to the EC2 configuration file
-- `KRONI_SIMULATED_MODE`: Set to "true" to run in simulation mode (for testing)
+3. Try the monitoring in simulation mode:
+   ```
+   ./bin/test_monitoring.sh
+   ```
 
-## Troubleshooting
+## Environment Variables
 
-### SSH Connection Issues
-
-If you're having trouble connecting to your EC2 instance:
-
-1. Make sure your key file has the correct permissions (`chmod 600 key.pem`)
-2. Verify that your EC2 instance's security group allows SSH from your IP
-3. Check that the EC2 user has permissions to run Docker commands
-
-### Discord Webhook Issues
-
-If Discord notifications aren't working:
-
-1. Verify your webhook URL is correct
-2. Make sure `DISCORD_WEBHOOK_ENABLED` is set to "true" in your config
-3. Check network connectivity to Discord's servers
-
-## Contributing
-
-When extending this monitoring system:
-
-1. Add new metrics in `server_utils.py`
-2. Update the `server_monitoring_flow.py` to use your new metrics
-3. Test thoroughly with `test_monitoring.sh` before deploying 
+- `KRONI_SIMULATED_MODE=true` - Run in simulation mode with mock data
+- `KRONI_EC2_CONFIG` - Path to EC2 configuration file 

@@ -110,6 +110,66 @@ if [ "$APPLY" = "true" ]; then
   eval "$DEPLOY_CMD"
   
   if [ $? -eq 0 ]; then
+    # After creating deployment, set up containers
+    # Setup container environment if running locally
+    if [[ $(docker ps -q -f name=prefect-server) ]]; then
+      echo "Setting up Prefect container environment..."
+      
+      # Create required directories in containers
+      echo "Creating directories in containers..."
+      docker exec prefect-server mkdir -p /opt/prefect/config /opt/prefect/utils /root/.ssh
+      docker exec prefect-worker mkdir -p /opt/prefect/config /opt/prefect/utils /root/.ssh
+      
+      # Copy configuration
+      echo "Copying configuration to containers..."
+      docker cp "$CONFIG_DIR/ec2_config.ini" prefect-server:/opt/prefect/config/
+      docker cp "$CONFIG_DIR/ec2_config.ini" prefect-worker:/opt/prefect/config/
+      
+      # Get utils path
+      UTILS_DIR="$(dirname "$CONFIG_DIR")/utils"
+      echo "Copying utility modules to containers..."
+      docker cp "$UTILS_DIR/server_utils.py" prefect-server:/opt/prefect/utils/
+      docker cp "$UTILS_DIR/server_utils.py" prefect-worker:/opt/prefect/utils/
+      
+      # Find and copy SSH key
+      echo "Setting up SSH in containers..."
+      SSH_KEY=""
+      
+      # First, look for specific EC2 key
+      if [ -f ~/.ssh/ec2_minecraft.pem ]; then
+        SSH_KEY=~/.ssh/ec2_minecraft.pem
+      else
+        # Otherwise use any available key
+        for key in ~/.ssh/id_rsa ~/.ssh/id_ed25519; do
+          if [ -f "$key" ]; then
+            SSH_KEY="$key"
+            break
+          fi
+        done
+      fi
+      
+      if [ -n "$SSH_KEY" ]; then
+        echo "Using SSH key: $SSH_KEY"
+        docker cp "$SSH_KEY" prefect-server:/root/.ssh/id_rsa
+        docker cp "$SSH_KEY" prefect-worker:/root/.ssh/id_rsa
+        docker exec prefect-server chmod 600 /root/.ssh/id_rsa
+        docker exec prefect-worker chmod 600 /root/.ssh/id_rsa
+        
+        # Get EC2 host from config
+        EC2_HOST=$(grep "^EC2_HOST=" "$CONFIG_DIR/ec2_config.ini" | cut -d= -f2)
+        
+        if [ -n "$EC2_HOST" ]; then
+          echo "Adding EC2 host $EC2_HOST to known_hosts..."
+          docker exec prefect-server bash -c "ssh-keyscan -H $EC2_HOST >> /root/.ssh/known_hosts"
+          docker exec prefect-worker bash -c "ssh-keyscan -H $EC2_HOST >> /root/.ssh/known_hosts"
+        fi
+      else
+        echo -e "${YELLOW}No SSH key found - SSH access may not work${NC}"
+      fi
+      
+      echo "Container setup completed!"
+    fi
+    
     banner "Deployment created successfully!"
     echo "Your monitoring flow is now scheduled to run every $INTERVAL seconds."
     echo
