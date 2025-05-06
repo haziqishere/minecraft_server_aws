@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'prefect/flows/**'
+      - 'prefect/utils/**'
+      - 'prefect/config/**'
   workflow_dispatch:
     inputs:
       prefect_ip:
@@ -121,21 +123,35 @@ jobs:
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
       
       # Identify changed files if no specific flow is specified
-      - name: Identify changed flows
-        id: changed_flows
+      - name: Identify changed files
+        id: changed_files
         run: |
           if [ -n "${{ github.event.inputs.flow_to_update }}" ]; then
             echo "Specific flow to update: ${{ github.event.inputs.flow_to_update }}"
             FLOW_FILES="prefect/flows/${{ github.event.inputs.flow_to_update }}"
           else
-            # Get list of changed files in the prefect/flows directory
+            # Get list of changed files in the prefect directories
             git fetch origin
             BASE_SHA=$(git merge-base origin/main HEAD)
+            
+            # Identify changed flow files
             FLOW_FILES=$(git diff --name-only $BASE_SHA HEAD | grep "^prefect/flows/.*\.py$" || echo "")
             if [ -z "$FLOW_FILES" ]; then
               echo "No flow files changed"
               # Still continue to make sure setup works
               FLOW_FILES="prefect/flows/*.py"
+            fi
+            
+            # Identify changed utils files
+            UTILS_CHANGED=$(git diff --name-only $BASE_SHA HEAD | grep "^prefect/utils/" || echo "")
+            if [ -n "$UTILS_CHANGED" ]; then
+              echo "Utils files changed: $UTILS_CHANGED"
+            fi
+            
+            # Identify changed config files
+            CONFIG_CHANGED=$(git diff --name-only $BASE_SHA HEAD | grep "^prefect/config/" || echo "")
+            if [ -n "$CONFIG_CHANGED" ]; then
+              echo "Config files changed: $CONFIG_CHANGED"
             fi
           fi
           
@@ -157,6 +173,26 @@ jobs:
           if [ -f "prefect/requirements.txt" ]; then
             echo "Copying requirements.txt"
             scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
+          fi
+      
+      # Copy utils and config directories
+      - name: Copy utils and config directories
+        run: |
+          echo "Copying utils and config directories to the Prefect instance..."
+          
+          # Create directories if they don't exist
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "mkdir -p ~/prefect/utils ~/prefect/config"
+          
+          # Copy utils directory
+          if [ -d "prefect/utils" ]; then
+            echo "Copying utils directory"
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r prefect/utils/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/utils/
+          fi
+          
+          # Copy config directory
+          if [ -d "prefect/config" ]; then
+            echo "Copying config directory"
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r prefect/config/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/config/
           fi
       
       # Install dependencies
