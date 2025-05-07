@@ -361,7 +361,7 @@ jobs:
           echo "Checking flow files for proper flow functions..."
           
           # Create a temporary script to check flow files
-          cat > check_flows.sh << 'EOF'
+          cat > check_flows.sh << 'CHECK_FLOWS_EOF'
           #!/bin/bash
           for FLOW_FILE in "$@"; do
             if [ ! -f "$FLOW_FILE" ]; then
@@ -391,7 +391,7 @@ jobs:
               echo "Found flow functions in $FLOW_NAME: $FLOW_FUNCS"
             fi
           done
-          EOF
+          CHECK_FLOWS_EOF
           
           chmod +x check_flows.sh
           ./check_flows.sh $FLOW_FILES
