@@ -67,6 +67,14 @@ resource "aws_lightsail_instance_public_ports" "minecraft_server" {
     to_port   = 22
     cidrs     = var.ssh_allowed_cidrs
   }
+  
+  # Allow Metrics API port
+  port_info {
+    protocol  = "tcp"
+    from_port = 8000
+    to_port   = 8000
+    cidrs     = var.metrics_api_allowed_cidrs
+  }
 }
 
 # Create S3 bucket for backups

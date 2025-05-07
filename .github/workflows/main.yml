@@ -68,16 +68,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
           
-      # Get the Prefect instance IP from workflow input or AWS
+      # Get the Prefect instance IP
       - name: Get Prefect instance IP
         id: prefect_ip
         run: |
-          if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
-            # Use the provided IP from workflow input
-            PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
-            echo "Using provided Prefect IP: $PREFECT_IP"
+          # Use Prefect IP from secrets if available
+          PREFECT_IP="${{ secrets.PREFECT_IP }}"
+          
+          if [ -n "$PREFECT_IP" ]; then
+            echo "Using Prefect IP from GitHub secrets: $PREFECT_IP"
           else
-            echo "No Prefect IP provided, attempting to get from Terraform..."
+            echo "No PREFECT_IP secret found, trying to get from Terraform..."
             
             # Setup Terraform
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
@@ -94,25 +95,19 @@ jobs:
             echo "Getting Prefect IP from Terraform output..."
             if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
               echo "Failed to get Prefect IP from Terraform output."
-              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              echo "::error::Failed to get Prefect IP from Terraform. Please add it to GitHub secrets as PREFECT_IP."
               exit 1
             fi
-            
-            # Validate the IP
-            if [ -z "$PREFECT_IP" ]; then
-              echo "Prefect IP from Terraform is empty."
-              echo "::error::Prefect IP from Terraform is empty. Please provide an IP address manually."
-              exit 1
-            fi
-            
-            echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
-            cd ..
           fi
           
-          # Output the IP for debugging
-          echo "Using Prefect IP: $PREFECT_IP"
+          # Validate the IP
+          if [ -z "$PREFECT_IP" ]; then
+            echo "Prefect IP is empty."
+            echo "::error::Prefect IP not found. Please add it to GitHub secrets as PREFECT_IP."
+            exit 1
+          fi
           
-          # Set output parameter and environment variable
+          echo "Using Prefect IP: $PREFECT_IP"
           echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
       
@@ -205,16 +200,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
           
-      # Get the Prefect instance IP from workflow input or AWS
+      # Get the Prefect instance IP
       - name: Get Prefect instance IP
         id: get_ip
         run: |
-          if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
-            # Use the provided IP from workflow input
-            PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
-            echo "Using provided Prefect IP: $PREFECT_IP"
+          # Use Prefect IP from secrets if available
+          PREFECT_IP="${{ secrets.PREFECT_IP }}"
+          
+          if [ -n "$PREFECT_IP" ]; then
+            echo "Using Prefect IP from GitHub secrets: $PREFECT_IP"
           else
-            echo "No Prefect IP provided, attempting to get from Terraform..."
+            echo "No PREFECT_IP secret found, trying to get from Terraform..."
             
             # Setup Terraform
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
@@ -231,25 +227,19 @@ jobs:
             echo "Getting Prefect IP from Terraform output..."
             if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
               echo "Failed to get Prefect IP from Terraform output."
-              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              echo "::error::Failed to get Prefect IP from Terraform. Please add it to GitHub secrets as PREFECT_IP."
               exit 1
             fi
-            
-            # Validate the IP
-            if [ -z "$PREFECT_IP" ]; then
-              echo "Prefect IP from Terraform is empty."
-              echo "::error::Prefect IP from Terraform is empty. Please provide an IP address manually."
-              exit 1
-            fi
-            
-            echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
-            cd ..
           fi
           
-          # Output the IP for debugging
-          echo "Using Prefect IP: $PREFECT_IP"
+          # Validate the IP
+          if [ -z "$PREFECT_IP" ]; then
+            echo "Prefect IP is empty."
+            echo "::error::Prefect IP not found. Please add it to GitHub secrets as PREFECT_IP."
+            exit 1
+          fi
           
-          # Set output parameter and environment variable
+          echo "Using Prefect IP: $PREFECT_IP"
           echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
       

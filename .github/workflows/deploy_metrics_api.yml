@@ -1,0 +1,216 @@
+name: "Deploy Metrics API"
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'metrics_api/**'
+      - '.github/workflows/deploy_metrics_api.yml'
+  workflow_dispatch:
+    inputs:
+      api_key:
+        description: 'Custom API key (leave empty to generate one)'
+        required: false
+        type: string
+
+env:
+  DOCKER_IMAGE: "minecraft-metrics-api:latest"
+  METRICS_API_PORT: 8000
+  AWS_REGION: ${{ secrets.AWS_REGION || 'ap-southeast-1' }}
+
+jobs:
+  build_and_deploy:
+    name: "Build and Deploy Metrics API"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      # Get the Minecraft server IP from GitHub secrets or terraform output
+      - name: Get Minecraft server IP
+        id: minecraft_ip
+        run: |
+          # Use Minecraft IP from secrets if available
+          MINECRAFT_IP="${{ secrets.MINECRAFT_IP }}"
+          
+          if [ -n "$MINECRAFT_IP" ]; then
+            echo "Using Minecraft IP from GitHub secrets: $MINECRAFT_IP"
+          else
+            echo "No MINECRAFT_IP secret found, trying to get from Terraform..."
+            
+            # Setup Terraform
+            sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
+            wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get update && sudo apt-get install -y terraform
+            
+            # Initialize Terraform
+            cd terraform
+            terraform init -input=false
+            
+            # Get the Minecraft server IP
+            if ! MINECRAFT_IP=$(terraform output -raw minecraft_server_ip); then
+              echo "Failed to get Minecraft IP from Terraform."
+              echo "::error::Failed to get Minecraft IP. Please add it to GitHub secrets as MINECRAFT_IP."
+              exit 1
+            fi
+          fi
+          
+          if [ -z "$MINECRAFT_IP" ]; then
+            echo "Minecraft IP is empty."
+            echo "::error::Minecraft IP not found. Please add it to GitHub secrets as MINECRAFT_IP."
+            exit 1
+          fi
+          
+          echo "Using Minecraft IP: $MINECRAFT_IP"
+          echo "MINECRAFT_IP=$MINECRAFT_IP" >> $GITHUB_ENV
+          echo "minecraft_ip=$MINECRAFT_IP" >> $GITHUB_OUTPUT
+      
+      # Setup SSH for connecting to the Minecraft server
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }}
+          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }}
+          echo "Setting up SSH connection to ${{ env.MINECRAFT_IP }}..."
+          ssh-keyscan -H ${{ env.MINECRAFT_IP }} >> ~/.ssh/known_hosts
+      
+      # Generate or use provided API key
+      - name: Set API Key
+        id: api_key
+        run: |
+          if [ -n "${{ github.event.inputs.api_key }}" ]; then
+            API_KEY="${{ github.event.inputs.api_key }}"
+          else
+            API_KEY=$(openssl rand -hex 16)
+          fi
+          echo "API_KEY=$API_KEY" >> $GITHUB_ENV
+          echo "api_key=$API_KEY" >> $GITHUB_OUTPUT
+          echo "Using API key: $API_KEY (first 8 chars shown for security)"
+      
+      # Copy files to the Minecraft server
+      - name: Prepare Minecraft server
+        run: |
+          echo "Creating directories on Minecraft server..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} ec2-user@${{ env.MINECRAFT_IP }} "mkdir -p /opt/metrics-api"
+          
+          # Copy files needed for Docker build
+          echo "Copying files to Minecraft server..."
+          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} metrics_api/Dockerfile ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} metrics_api/docker-compose.yml ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} metrics_api/requirements.txt ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+          scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} metrics_api_server.py ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+      
+      # Build and start the Docker container
+      - name: Build and start container
+        run: |
+          echo "Building and starting Docker container on Minecraft server..."
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} ec2-user@${{ env.MINECRAFT_IP }} "
+          cd /opt/metrics-api
+          
+          # Create environment file with API key
+          echo 'METRICS_API_KEY=${{ env.API_KEY }}' > .env
+          echo 'METRICS_API_PORT=${{ env.METRICS_API_PORT }}' >> .env
+          
+          # Stop any existing container
+          docker-compose down || true
+          
+          # Build and start the container
+          docker-compose up -d --build
+          
+          # Save API key to file for future reference
+          echo 'API Key: ${{ env.API_KEY }}' > api_key.txt
+          echo 'API URL: http://localhost:${{ env.METRICS_API_PORT }}/api/v1' >> api_key.txt
+          "
+      
+      # Update Prefect flow if needed
+      - name: Update Prefect (if Prefect IP is available)
+        run: |
+          # Use Prefect IP from secrets if available, fallback to Terraform output
+          PREFECT_IP="${{ secrets.PREFECT_IP }}"
+          
+          # Try Terraform output only if secret is not set
+          if [ -z "$PREFECT_IP" ]; then
+            echo "No PREFECT_IP secret found, trying to get from Terraform..."
+            PREFECT_IP=$(cd terraform && terraform output -raw prefect_orchestration_ip 2>/dev/null || echo "")
+          else
+            echo "Using PREFECT_IP from GitHub secrets"
+          fi
+          
+          if [ -n "$PREFECT_IP" ]; then
+            echo "Prefect server IP found: $PREFECT_IP"
+            echo "Updating Prefect server to use the new API..."
+            
+            # Setup SSH key for Prefect
+            ssh-keyscan -H $PREFECT_IP >> ~/.ssh/known_hosts
+            
+            # Copy server_monitoring_flow.py to Prefect
+            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} prefect/flows/server_monitoring_flow.py ec2-user@$PREFECT_IP:~/prefect/flows/
+            
+            # Update environment variables
+            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} ec2-user@$PREFECT_IP "
+            cat > ~/prefect/.env << EOF
+            PREFECT_API_URL=http://$PREFECT_IP:4200/api
+            METRICS_API_URL=http://${{ env.MINECRAFT_IP }}:8000
+            METRICS_API_KEY=${{ env.API_KEY }}
+            EOF
+            
+            # Restart Prefect to pick up new variables
+            cd ~/prefect && docker-compose down && docker-compose up -d
+            
+            # Wait for server to start
+            sleep 10
+            
+            # Register the flow
+            docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy server_monitoring_flow.py:server_monitoring_flow -n server_monitoring_flow-deployment --pool default -v'
+            "
+            
+            echo "Prefect server updated successfully!"
+          else
+            echo "Prefect server IP not found, skipping Prefect update"
+          fi
+      
+      # Verify API is working
+      - name: Verify API
+        run: |
+          echo "Waiting for API to be ready..."
+          # Give the API some time to start up
+          sleep 5
+          
+          # Check if the API is responding
+          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME || 'kroni-survival-key' }} ec2-user@${{ env.MINECRAFT_IP }} "
+          for i in {1..10}; do
+            if curl -s http://localhost:${{ env.METRICS_API_PORT }}/api/v1/health | grep -q healthy; then
+              echo 'API is healthy!'
+              exit 0
+            fi
+            echo 'Waiting for API to be ready...'
+            sleep 2
+          done
+          echo 'API failed to start!'
+          docker logs minecraft-metrics-api
+          exit 1
+          "
+      
+      # Update Firewall rule if needed
+      - name: Update Firewall Rule
+        run: |
+          echo "Ensuring Lightsail firewall allows port ${{ env.METRICS_API_PORT }}..."
+          aws lightsail open-instance-public-ports \
+            --port-info fromPort=${{ env.METRICS_API_PORT }},toPort=${{ env.METRICS_API_PORT }},protocol=TCP \
+            --instance-name $(cd terraform && terraform output -raw lightsail_instance_name)
+      
+      # Output success message
+      - name: Success
+        run: |
+          echo "Metrics API deployed successfully!"
+          echo "API is available at: http://${{ env.MINECRAFT_IP }}:${{ env.METRICS_API_PORT }}/api/v1/health"
+          echo "API Key (first 8 chars shown): ${API_KEY:0:8}..." 

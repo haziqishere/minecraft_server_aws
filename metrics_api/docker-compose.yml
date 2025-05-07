@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  metrics-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: minecraft-metrics-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - METRICS_API_KEY=${METRICS_API_KEY:-changeme}
+      - METRICS_API_PORT=8000
+      - MINECRAFT_WORLD_PATH=/data/world
+      - TZ=UTC
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # For Docker stats
+      - /data:/data:ro  # For world size calculation
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s 

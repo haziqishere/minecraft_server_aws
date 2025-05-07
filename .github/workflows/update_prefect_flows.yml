@@ -41,76 +41,46 @@ jobs:
       - name: Get Prefect instance IP
         id: prefect_ip
         run: |
-          # Check for IP in this priority order:
-          # 1. Workflow input parameter
-          # 2. Repository secret or variable
-          # 3. Terraform output (as fallback)
+          # Get Prefect IP from secrets if available
+          PREFECT_IP="${{ secrets.PREFECT_IP }}"
           
-          if [ -n "${{ github.event.inputs.prefect_ip }}" ]; then
-            # 1. Use the provided IP from workflow input
-            PREFECT_IP="${{ github.event.inputs.prefect_ip }}"
-            echo "Using provided Prefect IP from workflow input: $PREFECT_IP"
-            
-          elif [ -n "${{ secrets.PREFECT_IP }}" ]; then
-            # 2. Use IP from repository secrets
-            PREFECT_IP="${{ secrets.PREFECT_IP }}"
-            echo "Using Prefect IP from repository secrets"
-            
-          elif [ -n "${{ vars.PREFECT_IP }}" ]; then
-            # 2b. Use IP from repository variables
-            PREFECT_IP="${{ vars.PREFECT_IP }}"
-            echo "Using Prefect IP from repository variables"
-            
+          if [ -n "$PREFECT_IP" ]; then
+            echo "Using Prefect IP from GitHub secrets: $PREFECT_IP"
           else
-            # 3. Try to get from Terraform as last resort
-            echo "No Prefect IP provided in inputs, secrets, or variables. Attempting to get from Terraform..."
+            # Try to get from Terraform as fallback
+            echo "No PREFECT_IP secret found, trying to get from Terraform..."
             
-            # Setup Terraform
+            # Setup Terraform if needed
             sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
             wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
             echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
             sudo apt-get update && sudo apt-get install -y terraform
             
-            # Initialize Terraform only if terraform directory exists
-            if [ -d "terraform" ]; then
-              cd terraform
-              echo "Initializing Terraform..."
-              terraform init -input=false
-              
-              # Get IP from Terraform output with error handling
-              echo "Getting Prefect IP from Terraform output..."
-              PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null || echo "")
-              cd ..
-              
-              # Validate that we got a value and it's an IP address format
-              if [ -z "$PREFECT_IP" ] || ! [[ $PREFECT_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                echo "::warning::Could not get valid Prefect IP from Terraform. Using hardcoded fallback."
-                # Hardcoded fallback IP
-                PREFECT_IP="13.212.250.1"
-              else
-                echo "Retrieved Prefect IP from Terraform: $PREFECT_IP"
-              fi
-            else
-              echo "::warning::Terraform directory doesn't exist. Using hardcoded fallback IP."
-              # Hardcoded fallback IP
-              PREFECT_IP="13.212.250.1"
+            # Initialize Terraform
+            cd terraform
+            echo "Initializing Terraform..."
+            terraform init -input=false
+            
+            # Get IP from Terraform output with error handling
+            echo "Getting Prefect IP from Terraform output..."
+            if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
+              echo "Failed to get Prefect IP from Terraform output."
+              echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
+              exit 1
             fi
           fi
           
-          # Validate we have a proper IP
-          if [ -z "$PREFECT_IP" ] || ! [[ $PREFECT_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Failed to get a valid Prefect IP. Please check your configuration."
+          # Validate the IP
+          if [ -z "$PREFECT_IP" ]; then
+            echo "Prefect IP is empty."
+            echo "::error::Prefect IP not found. Please add it to GitHub secrets as PREFECT_IP."
             exit 1
           fi
           
-          # Output the IP for debugging
           echo "Using Prefect IP: $PREFECT_IP"
-          
-          # Set output parameter and environment variables
           echo "prefect_ip=$PREFECT_IP" >> $GITHUB_OUTPUT
           echo "PREFECT_IP=$PREFECT_IP" >> $GITHUB_ENV
           echo "PREFECT_HOST=$PREFECT_IP" >> $GITHUB_ENV
-          echo "Prefect instance IP: $PREFECT_IP"
       
       # Setup SSH for connecting to the instance
       - name: Setup SSH
@@ -201,7 +171,40 @@ jobs:
             ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "chmod +x ~/prefect/bin/*.sh"
           fi
       
-      # Install dependencies
+      # Check for metrics API configuration
+      - name: Check for Metrics API
+        id: metrics_api
+        run: |
+          # Get Minecraft IP from secrets or from Terraform
+          MINECRAFT_IP="${{ secrets.MINECRAFT_IP }}"
+          
+          if [ -z "$MINECRAFT_IP" ]; then
+            echo "No MINECRAFT_IP secret found, trying to get from Terraform..."
+            MINECRAFT_IP=$(cd terraform && terraform output -raw minecraft_server_ip 2>/dev/null || echo "")
+          else
+            echo "Using MINECRAFT_IP from GitHub secrets"
+          fi
+          
+          if [ -n "$MINECRAFT_IP" ]; then
+            echo "Checking for Metrics API on $MINECRAFT_IP..."
+            
+            # Try to get API key from server
+            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@$MINECRAFT_IP "test -f /opt/metrics-api/api_key.txt"; then
+              API_KEY=$(ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@$MINECRAFT_IP "grep 'API Key:' /opt/metrics-api/api_key.txt | cut -d' ' -f3")
+              echo "Found API key from server"
+              echo "METRICS_API_URL=http://$MINECRAFT_IP:8000" >> $GITHUB_ENV
+              echo "METRICS_API_KEY=$API_KEY" >> $GITHUB_ENV
+              echo "metrics_api_available=true" >> $GITHUB_OUTPUT
+            else
+              echo "API key not found on server"
+              echo "metrics_api_available=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Minecraft server IP not found"
+            echo "metrics_api_available=false" >> $GITHUB_OUTPUT
+          fi
+      
+      # Install Python dependencies and setup containers
       - name: Install Python dependencies and setup containers
         run: |
           echo "Installing Python dependencies in Prefect containers..."
@@ -214,19 +217,38 @@ jobs:
               docker cp ~/prefect/requirements.txt prefect-worker:/tmp/requirements.txt
               docker exec prefect-worker pip install -r /tmp/requirements.txt
               
+              # Also install requests package if not in requirements
+              docker exec prefect-server pip install requests
+              docker exec prefect-worker pip install requests
+              
               # Verify dependency installation
               echo 'Verifying key package installation:'
-              docker exec prefect-server pip list | grep -E 'psutil|paramiko'
-              docker exec prefect-worker pip list | grep -E 'psutil|paramiko'
+              docker exec prefect-server pip list | grep -E 'psutil|paramiko|requests'
+              docker exec prefect-worker pip list | grep -E 'psutil|paramiko|requests'
             else
               echo 'ERROR: requirements.txt not found! Cannot set up containers properly.'
               echo 'Please ensure requirements.txt exists in the prefect directory.'
               exit 1
             fi
             
-            # We've verified the packages are installed from requirements.txt
-            # No fallback installations needed
-
+            # If Metrics API is available, update environment files
+            if [ -n "${{ env.METRICS_API_URL }}" ] && [ -n "${{ env.METRICS_API_KEY }}" ]; then
+              echo "Updating environment with Metrics API configuration"
+              
+              # Update .env file
+              cat > ~/prefect/.env << EOF
+              PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api
+              METRICS_API_URL=${{ env.METRICS_API_URL }}
+              METRICS_API_KEY=${{ env.METRICS_API_KEY }}
+              EOF
+              
+              # Update Docker container environment
+              docker exec prefect-server bash -c 'echo \"export METRICS_API_URL=${{ env.METRICS_API_URL }}\" >> /root/.bashrc'
+              docker exec prefect-server bash -c 'echo \"export METRICS_API_KEY=${{ env.METRICS_API_KEY }}\" >> /root/.bashrc'
+              docker exec prefect-worker bash -c 'echo \"export METRICS_API_URL=${{ env.METRICS_API_URL }}\" >> /root/.bashrc'
+              docker exec prefect-worker bash -c 'echo \"export METRICS_API_KEY=${{ env.METRICS_API_KEY }}\" >> /root/.bashrc'
+            fi
+            
             # Set up the Prefect containers with proper configuration files
             if [ -f ~/prefect/bin/setup_prefect_containers.sh ]; then
               echo 'Setting up Prefect containers with proper configuration...'

@@ -3,7 +3,7 @@
 Kroni Survival Minecraft Server - Monitoring Flow
 
 This Prefect flow handles:
-1. Collecting server metrics (CPU, memory, disk usage)
+1. Collecting server metrics (CPU, memory, disk usage) via API
 2. Sending metrics to Discord webhook
 3. Monitoring Minecraft server status
 4. Tracking Minecraft world size growth
@@ -16,23 +16,12 @@ import sys
 import datetime
 import json
 import time
-import platform
-import psutil
 from pathlib import Path
 from typing import Dict, Optional
 
 # Import Prefect modules
 from prefect import flow, task, get_run_logger
 import requests
-
-# Import utility functions
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.server_utils import (
-    get_ec2_config,
-    check_container_status,
-    get_directory_size,
-    get_system_metrics_remote
-)
 
 # Default config
 DEFAULT_CONFIG = {
@@ -41,38 +30,48 @@ DEFAULT_CONFIG = {
     "discord_webhook_url": "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9",
     "minecraft_container_name": "minecraft-server",
     "data_path": "/data",
-    "world_path": "/data/world"
+    "world_path": "/data/world",
+    "metrics_api_url": os.environ.get("METRICS_API_URL", "http://localhost:8000"),
+    "metrics_api_key": os.environ.get("METRICS_API_KEY", "")
 }
 
 @task(name="Check Minecraft Server Status")
-def check_server_status(container_name: str = "minecraft-server") -> bool:
-    """Check if the Minecraft server is running"""
+def check_server_status(api_url: str, api_key: str) -> bool:
+    """Check if the Minecraft server is running via the Metrics API"""
     logger = get_run_logger()
-    logger.info(f"Checking Minecraft server status...")
+    logger.info(f"Checking Minecraft server status via API...")
     
     # In simulation mode, always return running
     if os.environ.get("KRONI_SIMULATED_MODE", "").lower() == "true":
         logger.info("Running in SIMULATED mode - always reporting container as RUNNING")
         return True
     
-    # Get EC2 config for remote SSH checking
-    ec2_config = get_ec2_config()
-    
-    # Use remote checking by default in production environments
-    # This ensures the container status is properly checked on the EC2 host
-    if ec2_config and ec2_config.get("EC2_HOST"):
-        logger.info(f"Using remote SSH to check container status on {ec2_config.get('EC2_HOST')}")
-        return check_container_status(container_name, ssh_config=ec2_config, logger=logger)
-    
-    # Fallback to local checking if no EC2 config is found
-    logger.warning("No EC2 configuration found - checking container locally (may be incorrect)")
-    return check_container_status(container_name, logger=logger)
+    try:
+        # Use the Minecraft metrics endpoint to check server status
+        headers = {"X-API-Key": api_key} if api_key else {}
+        response = requests.get(f"{api_url}/api/v1/minecraft/metrics", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            is_running = data.get("status") == "running"
+            logger.info(f"Minecraft server status: {'Running' if is_running else 'Stopped'}")
+            return is_running
+        else:
+            logger.error(f"Failed to check server status: HTTP {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            # Fallback to assuming server is running to avoid false alarms
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error checking server status via API: {e}")
+        # Fallback to assuming server is running to avoid false alarms
+        return True
 
 @task(name="Get System Metrics")
-def get_system_metrics() -> Dict:
-    """Collect system metrics including CPU, memory, and disk usage"""
+def get_system_metrics(api_url: str, api_key: str) -> Dict:
+    """Collect system metrics via the Metrics API"""
     logger = get_run_logger()
-    logger.info(f"Collecting system metrics...")
+    logger.info(f"Collecting system metrics via API...")
     
     # In simulation mode, return simulated metrics
     if os.environ.get("KRONI_SIMULATED_MODE", "").lower() == "true":
@@ -98,103 +97,60 @@ def get_system_metrics() -> Dict:
             }
         }
     
-    # Get EC2 config for remote SSH metrics collection
-    ec2_config = get_ec2_config()
-    
-    # Use remote metrics collection by default in production environments
-    if ec2_config and ec2_config.get("EC2_HOST"):
-        host = ec2_config.get("EC2_HOST")
-        user = ec2_config.get("SSH_USER", "ec2-user")
-        port = ec2_config.get("SSH_PORT", "22")
-        
-        logger.info(f"Using remote SSH to collect metrics from {host}")
-        return get_system_metrics_remote(host, user, port)
-    
-    # Fallback to local metrics collection if no EC2 config is found
-    logger.warning("No EC2 configuration found - collecting metrics locally (may be incomplete)")
-    
-    # Local metrics collection follows here...
     try:
-        # Get CPU usage
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # Get system metrics
+        headers = {"X-API-Key": api_key} if api_key else {}
+        system_response = requests.get(f"{api_url}/api/v1/system/metrics", headers=headers, timeout=10)
+        minecraft_response = requests.get(f"{api_url}/api/v1/minecraft/metrics", headers=headers, timeout=10)
         
-        # Get memory usage
-        memory = psutil.virtual_memory()
-        memory_percent = memory.percent
-        
-        # Get disk usage for root and data partition
-        root_disk = psutil.disk_usage('/')
-        root_disk_percent = root_disk.percent
-        
-        data_disk = None
-        data_disk_percent = None
-        
-        # Check if data partition exists
-        if os.path.exists('/data'):
-            data_disk = psutil.disk_usage('/data')
-            data_disk_percent = data_disk.percent
-        
-        # Check load averages (Linux only)
-        load_avg = None
-        if platform.system() == "Linux":
-            load_avg = os.getloadavg()
-        
-        # Docker stats for Minecraft container
-        docker_stats = None
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["docker", "stats", "--no-stream", "--format", "{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}}"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+        if system_response.status_code != 200:
+            logger.error(f"Failed to get system metrics: HTTP {system_response.status_code}")
+            logger.error(f"Response: {system_response.text}")
+            raise Exception(f"API error: {system_response.status_code}")
             
-            # Parse docker stats output
-            for line in result.stdout.splitlines():
-                if "minecraft-server" in line:
-                    parts = line.split(',')
-                    if len(parts) >= 4:
-                        docker_stats = {
-                            "cpu_percent": parts[1].strip(),
-                            "mem_usage": parts[2].strip(),
-                            "mem_percent": parts[3].strip()
-                        }
-                    break
-        except Exception as e:
-            logger.error(f"Failed to get Docker stats: {e}")
+        system_data = system_response.json()
         
+        # Format system metrics to match the expected structure
         metrics = {
             "timestamp": datetime.datetime.now().isoformat(),
             "system": {
-                "cpu_percent": cpu_percent,
-                "memory_percent": memory_percent,
-                "memory_total_mb": round(memory.total / (1024 * 1024), 2),
-                "memory_used_mb": round(memory.used / (1024 * 1024), 2),
-                "root_disk_percent": root_disk_percent,
-                "root_disk_total_gb": round(root_disk.total / (1024 * 1024 * 1024), 2),
-                "root_disk_used_gb": round(root_disk.used / (1024 * 1024 * 1024), 2),
+                "cpu_percent": system_data["cpu"]["usage_percent"],
+                "memory_percent": system_data["memory"]["used_percent"],
+                "memory_used_mb": round(system_data["memory"]["used"] / (1024 * 1024), 2),
+                "memory_total_mb": round(system_data["memory"]["total"] / (1024 * 1024), 2),
+                "root_disk_percent": system_data["disk"]["root"]["used_percent"],
+                "root_disk_used_gb": round(system_data["disk"]["root"]["used"] / (1024 * 1024 * 1024), 2),
+                "root_disk_total_gb": round(system_data["disk"]["root"]["total"] / (1024 * 1024 * 1024), 2),
             }
         }
         
-        if load_avg:
-            metrics["system"]["load_avg_1min"] = load_avg[0]
-            metrics["system"]["load_avg_5min"] = load_avg[1]
-            metrics["system"]["load_avg_15min"] = load_avg[2]
+        # Add data disk if available
+        if "data" in system_data["disk"]:
+            metrics["system"]["data_disk_percent"] = system_data["disk"]["data"]["percent"]
+            metrics["system"]["data_disk_used_gb"] = round(system_data["disk"]["data"]["used"] / (1024 * 1024 * 1024), 2)
+            metrics["system"]["data_disk_total_gb"] = round(system_data["disk"]["data"]["total"] / (1024 * 1024 * 1024), 2)
         
-        if data_disk and data_disk_percent:
-            metrics["system"]["data_disk_percent"] = data_disk_percent
-            metrics["system"]["data_disk_total_gb"] = round(data_disk.total / (1024 * 1024 * 1024), 2)
-            metrics["system"]["data_disk_used_gb"] = round(data_disk.used / (1024 * 1024 * 1024), 2)
+        # Add load averages if available
+        if "load_avg" in system_data:
+            metrics["system"]["load_avg_1min"] = system_data["load_avg"]["1min"]
+            metrics["system"]["load_avg_5min"] = system_data["load_avg"]["5min"]
+            metrics["system"]["load_avg_15min"] = system_data["load_avg"]["15min"]
         
-        if docker_stats:
-            metrics["minecraft"] = docker_stats
+        # Add Minecraft metrics if available
+        if minecraft_response.status_code == 200:
+            minecraft_data = minecraft_response.json()
+            if minecraft_data.get("status") == "running":
+                metrics["minecraft"] = {
+                    "cpu_percent": minecraft_data.get("cpu_percent", "0%"),
+                    "mem_usage": minecraft_data.get("memory_usage", "0B / 0B"),
+                    "mem_percent": minecraft_data.get("memory_percent", "0%")
+                }
         
-        logger.info(f"Collected system metrics successfully")
+        logger.info(f"Collected system metrics successfully via API")
         return metrics
     
     except Exception as e:
-        logger.error(f"Failed to collect system metrics: {e}")
+        logger.error(f"Failed to collect system metrics via API: {e}")
         return {
             "timestamp": datetime.datetime.now().isoformat(),
             "system": {
@@ -211,8 +167,8 @@ def get_system_metrics() -> Dict:
         }
 
 @task(name="Get World Size")
-def get_world_size(world_path: str) -> Optional[float]:
-    """Get the size of the Minecraft world directory in GB"""
+def get_world_size(api_url: str, api_key: str) -> Optional[float]:
+    """Get the size of the Minecraft world directory in GB via the Metrics API"""
     logger = get_run_logger()
     
     # In simulation mode, return simulated world size
@@ -221,15 +177,31 @@ def get_world_size(world_path: str) -> Optional[float]:
         logger.info(f"Running in SIMULATED mode - returning simulated world size of {simulated_size} GB")
         return simulated_size
     
-    # When running in a container, the world path won't exist locally
-    # Instead use simulated mode to return a reasonable value
-    if not os.path.exists(world_path):
-        logger.info(f"World path {world_path} doesn't exist locally - using simulated size")
-        return 12.75  # Default simulated world size
-    
-    # If running locally and path exists, calculate actual world size
-    logger.info(f"Calculating size of world at {world_path}")
-    return get_directory_size(world_path)
+    try:
+        # Get world size from Minecraft metrics
+        headers = {"X-API-Key": api_key} if api_key else {}
+        response = requests.get(f"{api_url}/api/v1/minecraft/metrics", headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to get world size: HTTP {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            # Return a default value to avoid breaking the flow
+            return 12.75  # Default world size in GB
+            
+        data = response.json()
+        
+        # Check if world size is available
+        if "world_size_gb" in data:
+            world_size = data["world_size_gb"]
+            logger.info(f"World size from API: {world_size} GB")
+            return world_size
+        else:
+            logger.warning("World size not available from API")
+            return 12.75  # Default world size in GB
+            
+    except Exception as e:
+        logger.error(f"Failed to get world size via API: {e}")
+        return 12.75  # Default world size in GB
 
 @task(name="Send Discord Notification")
 def send_metrics_to_discord(
@@ -388,42 +360,54 @@ def send_metrics_to_discord(
 @flow(name="Kroni Survival Server Monitoring")
 def server_monitoring_flow(config: Optional[Dict] = None):
     """
-    Main flow for monitoring the Minecraft server.
+    Main flow for monitoring the Minecraft server using the Metrics API.
 
     Args:
         config: Configuration dictionary (optional)
     """
     logger = get_run_logger()
-    logger.info("Starting Kroni Survival Server Monitoring Flow...")
+    logger.info("Starting Kroni Survival Server Monitoring Flow with API-Based Approach...")
 
     # Merge default config with provided config
     cfg = DEFAULT_CONFIG.copy()
     if config:
         cfg.update(config)
     
+    # Extract API configuration
+    api_url = cfg["metrics_api_url"]
+    api_key = cfg["metrics_api_key"]
+    
+    logger.info(f"Using Metrics API at {api_url}")
+    
     try:
+        # Check if API is available
+        try:
+            response = requests.get(f"{api_url}/api/v1/health", timeout=5)
+            if response.status_code == 200:
+                logger.info("Metrics API is available and healthy")
+            else:
+                logger.warning(f"Metrics API returned status code {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Metrics API: {e}")
+            logger.warning("Will attempt to continue anyway...")
+        
         # Log environment for debugging
         logger.info(f"Running with KRONI_LOCAL_MODE: {os.environ.get('KRONI_LOCAL_MODE', 'not set')}")
         logger.info(f"Running with KRONI_DEV_MODE: {os.environ.get('KRONI_DEV_MODE', 'not set')}")
         logger.info(f"Running with KRONI_SIMULATED_MODE: {os.environ.get('KRONI_SIMULATED_MODE', 'not set')}")
         
-        # Check EC2 configuration
-        ec2_config = get_ec2_config()
-        ec2_host = ec2_config.get("EC2_HOST", "not configured")
-        logger.info(f"EC2_HOST configured as: {ec2_host}")
-        
         # Check if server is running
         logger.info(f"Checking if server container '{cfg['minecraft_container_name']}' is running...")
-        server_running = check_server_status(cfg["minecraft_container_name"])
+        server_running = check_server_status(api_url, api_key)
         logger.info(f"Server container status: {'Running' if server_running else 'Stopped'}")
         
         # Get system metrics
         logger.info("Collecting system metrics...")
-        metrics = get_system_metrics()
+        metrics = get_system_metrics(api_url, api_key)
         
         # Get world size
-        logger.info(f"Checking world size for path: {cfg['world_path']}")
-        world_size = get_world_size(cfg["world_path"])
+        logger.info(f"Checking world size...")
+        world_size = get_world_size(api_url, api_key)
         logger.info(f"World size: {world_size} GB")
         
         # Send metrics to Discord

@@ -136,3 +136,9 @@ variable "prefect_ui_allowed_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"] # This should be restricted in production
 }
+
+variable "metrics_api_allowed_cidrs" {
+  description = "CIDR blocks allowed to access the metrics API"
+  type        = list(string)
+  default     = ["0.0.0.0/0"] # This should be restricted in production to only allow the Prefect server IP
+}
