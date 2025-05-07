@@ -465,7 +465,7 @@ jobs:
               docker exec prefect-worker bash -c \"ssh-keyscan -H localhost >> /root/.ssh/known_hosts\"
               
               # Always update EC2 config to use localhost
-              cat > /tmp/container_ec2_config.ini << \"EOF2\"
+              cat > /tmp/container_ec2_config.ini << 'EOF_CONFIG'
 # EC2 instance connection details for container use
 EC2_HOST=localhost
 SSH_USER=ec2-user
@@ -474,7 +474,7 @@ SSH_PORT=22
 # Monitor settings
 MONITOR_INTERVAL=300  # 5 minutes
 DISCORD_WEBHOOK_ENABLED=true
-EOF2
+EOF_CONFIG
               docker cp /tmp/container_ec2_config.ini prefect-server:/opt/prefect/config/ec2_config.ini
               docker cp /tmp/container_ec2_config.ini prefect-worker:/opt/prefect/config/ec2_config.ini
               
