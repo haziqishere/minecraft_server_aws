@@ -259,11 +259,11 @@ jobs:
               echo "Updating environment with Metrics API configuration"
               
               # Update .env file
-              cat > ~/prefect/.env << EOF
+              cat > ~/prefect/.env << 'PREFECT_ENV_EOF'
               PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api
               METRICS_API_URL=${{ env.METRICS_API_URL }}
               METRICS_API_KEY=${{ env.METRICS_API_KEY }}
-              EOF
+              PREFECT_ENV_EOF
               
               # Update Docker container environment
               docker exec prefect-server bash -c 'echo \"export METRICS_API_URL=${{ env.METRICS_API_URL }}\" >> /root/.bashrc'
