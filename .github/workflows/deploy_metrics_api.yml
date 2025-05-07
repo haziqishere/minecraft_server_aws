@@ -123,7 +123,8 @@ jobs:
       - name: Prepare Minecraft server
         run: |
           echo "Creating directories on Minecraft server..."
-          ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "mkdir -p /opt/metrics-api"
+          # Use sudo to create directory in /opt
+          ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "sudo mkdir -p /opt/metrics-api && sudo chown ec2-user:ec2-user /opt/metrics-api"
           
           # Make sure metrics_api directory exists
           if [ ! -d "metrics_api" ]; then
