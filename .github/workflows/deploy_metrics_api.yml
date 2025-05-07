@@ -199,11 +199,25 @@ jobs:
           echo 'METRICS_API_KEY=${{ env.API_KEY }}' > .env
           echo 'METRICS_API_PORT=${{ env.METRICS_API_PORT }}' >> .env
           
+          # Check docker and docker-compose are installed and working
+          echo 'Checking Docker installation:'
+          docker --version
+          docker-compose --version
+          
           # Stop any existing container
           docker-compose down || true
           
+          # Check files exist
+          echo 'Checking files exist:'
+          ls -la
+          
           # Build and start the container
+          echo 'Building and starting container...'
           docker-compose up -d --build
+          
+          # Check if container started
+          echo 'Container status:'
+          docker-compose ps
           
           # Save API key to file for future reference
           echo 'API Key: ${{ env.API_KEY }}' > api_key.txt
@@ -266,15 +280,36 @@ jobs:
           
           # Check if the API is responding
           ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "
+          # Check if container exists first
+          if ! docker ps -a | grep -q minecraft-metrics-api; then
+            echo 'ERROR: Container minecraft-metrics-api does not exist. Check docker-compose logs:'
+            cd /opt/metrics-api
+            docker-compose logs
+            echo 'Checking docker-compose.yml content:'
+            cat docker-compose.yml
+            exit 1
+          fi
+          
+          # Check if container is running
+          if ! docker ps | grep -q minecraft-metrics-api; then
+            echo 'ERROR: Container minecraft-metrics-api exists but is not running:'
+            docker ps -a | grep minecraft-metrics-api
+            echo 'Container logs:'
+            docker logs minecraft-metrics-api
+            exit 1
+          fi
+          
+          # Try to reach the health endpoint
           for i in {1..10}; do
             if curl -s http://localhost:${{ env.METRICS_API_PORT }}/api/v1/health | grep -q healthy; then
               echo 'API is healthy!'
               exit 0
             fi
-            echo 'Waiting for API to be ready...'
+            echo 'Waiting for API to be ready... Attempt $i/10'
             sleep 2
           done
-          echo 'API failed to start!'
+          
+          echo 'API failed to respond to health checks:'
           docker logs minecraft-metrics-api
           exit 1
           "

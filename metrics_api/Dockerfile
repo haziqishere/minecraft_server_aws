@@ -1,26 +1,23 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements file
+# Copy requirements first for better caching
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY metrics_api_server.py .
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+# Create directory for data if needed
+RUN mkdir -p /data
 
-# Expose port
+# Set environment variables
+ENV METRICS_API_PORT=8000
+ENV METRICS_API_KEY=""
+
+# Expose the port
 EXPOSE 8000
 
-# Command to run
+# Run the application
 CMD ["python", "metrics_api_server.py"] 
