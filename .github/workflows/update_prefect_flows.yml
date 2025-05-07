@@ -85,11 +85,34 @@ jobs:
       # Setup SSH for connecting to the instance
       - name: Setup SSH
         run: |
+          # Create the .ssh directory
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/${{ secrets.SSH_KEY_NAME }}
-          chmod 600 ~/.ssh/${{ secrets.SSH_KEY_NAME }}
-          echo "Setting up SSH connection to ${{ env.PREFECT_IP }}..."
+          
+          # Check if we have a PEM key available
+          if [ -n "${{ secrets.PREFECT_PEM_KEY }}" ]; then
+            echo "Using PREFECT_PEM_KEY for SSH authentication"
+            echo "${{ secrets.PREFECT_PEM_KEY }}" > ~/.ssh/prefect_key.pem
+            chmod 600 ~/.ssh/prefect_key.pem
+            SSH_KEY_PATH=~/.ssh/prefect_key.pem
+          else
+            echo "Using SSH_PRIVATE_KEY for SSH authentication"
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            SSH_KEY_PATH=~/.ssh/id_rsa
+          fi
+          
+          # Add the host key to known_hosts
           ssh-keyscan -H ${{ env.PREFECT_IP }} >> ~/.ssh/known_hosts
+          
+          # Test SSH connection
+          echo "Testing SSH connection..."
+          if ! ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no ec2-user@${{ env.PREFECT_IP }} "echo 'SSH Connection Successful'"; then
+            echo "::error::SSH connection failed. Check your SSH keys and permissions."
+            exit 1
+          fi
+          
+          # Export the SSH key path for later steps
+          echo "SSH_KEY_PATH=$SSH_KEY_PATH" >> $GITHUB_ENV
       
       # Identify changed files if no specific flow is specified
       - name: Identify changed files
@@ -134,14 +157,14 @@ jobs:
           for flow_file in $FLOW_FILES; do
             if [ -f "$flow_file" ]; then
               echo "Copying $flow_file"
-              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} $flow_file ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
+              scp -i $SSH_KEY_PATH $flow_file ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
             fi
           done
           
           # Copy requirements.txt
           if [ -f "prefect/requirements.txt" ]; then
             echo "Copying requirements.txt"
-            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
+            scp -i $SSH_KEY_PATH prefect/requirements.txt ec2-user@${{ env.PREFECT_IP }}:~/prefect/
           fi
       
       # Copy utils and config directories
@@ -150,25 +173,25 @@ jobs:
           echo "Copying utils, config and bin directories to the Prefect instance..."
           
           # Create directories if they don't exist
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "mkdir -p ~/prefect/utils ~/prefect/config ~/prefect/bin"
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "mkdir -p ~/prefect/utils ~/prefect/config ~/prefect/bin"
           
           # Copy utils directory
           if [ -d "prefect/utils" ]; then
             echo "Copying utils directory"
-            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r prefect/utils/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/utils/
+            scp -i $SSH_KEY_PATH -r prefect/utils/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/utils/
           fi
           
           # Copy config directory
           if [ -d "prefect/config" ]; then
             echo "Copying config directory"
-            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r prefect/config/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/config/
+            scp -i $SSH_KEY_PATH -r prefect/config/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/config/
           fi
 
           # Copy bin directory
           if [ -d "prefect/bin" ]; then
             echo "Copying bin directory"
-            scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} -r prefect/bin/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/bin/
-            ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "chmod +x ~/prefect/bin/*.sh"
+            scp -i $SSH_KEY_PATH -r prefect/bin/* ec2-user@${{ env.PREFECT_IP }}:~/prefect/bin/
+            ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "chmod +x ~/prefect/bin/*.sh"
           fi
       
       # Check for metrics API configuration
@@ -189,8 +212,8 @@ jobs:
             echo "Checking for Metrics API on $MINECRAFT_IP..."
             
             # Try to get API key from server
-            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@$MINECRAFT_IP "test -f /opt/metrics-api/api_key.txt"; then
-              API_KEY=$(ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@$MINECRAFT_IP "grep 'API Key:' /opt/metrics-api/api_key.txt | cut -d' ' -f3")
+            if ssh -i $SSH_KEY_PATH ec2-user@$MINECRAFT_IP "test -f /opt/metrics-api/api_key.txt"; then
+              API_KEY=$(ssh -i $SSH_KEY_PATH ec2-user@$MINECRAFT_IP "grep 'API Key:' /opt/metrics-api/api_key.txt | cut -d' ' -f3")
               echo "Found API key from server"
               echo "METRICS_API_URL=http://$MINECRAFT_IP:8000" >> $GITHUB_ENV
               echo "METRICS_API_KEY=$API_KEY" >> $GITHUB_ENV
@@ -208,7 +231,7 @@ jobs:
       - name: Install Python dependencies and setup containers
         run: |
           echo "Installing Python dependencies in Prefect containers..."
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "
             # Install dependencies from requirements.txt in the EC2 home directory
             if [ -f ~/prefect/requirements.txt ]; then
               echo 'Installing dependencies from requirements.txt...'
@@ -267,17 +290,17 @@ jobs:
           echo "Checking prefect.yaml file on ${{ env.PREFECT_IP }}..."
           
           # Check if prefect.yaml already exists on the server
-          if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "test -f ~/prefect/prefect.yaml"; then
+          if ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "test -f ~/prefect/prefect.yaml"; then
             echo "prefect.yaml already exists, preserving it"
           else
             echo "Creating default prefect.yaml file..."
             # Copy the template file to the server
             if [ -f "prefect/prefect.yaml.template" ]; then
-              scp -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} prefect/prefect.yaml.template ec2-user@${{ env.PREFECT_IP }}:~/prefect/prefect.yaml
+              scp -i $SSH_KEY_PATH prefect/prefect.yaml.template ec2-user@${{ env.PREFECT_IP }}:~/prefect/prefect.yaml
               echo "Default prefect.yaml created from template"
             else
               echo "Warning: Template file not found. Creating minimal prefect.yaml"
-              ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "echo 'name: minecraft-automation' > ~/prefect/prefect.yaml"
+              ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "echo 'name: minecraft-automation' > ~/prefect/prefect.yaml"
             fi
           fi
       
@@ -285,7 +308,7 @@ jobs:
       - name: Set PREFECT_HOST
         run: |
           echo "Setting PREFECT_HOST environment variable on ${{ env.PREFECT_IP }}..."
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "
             echo 'export PREFECT_HOST=${{ env.PREFECT_IP }}' > ~/.prefect_env
             echo '[ -f ~/.prefect_env ] && source ~/.prefect_env' >> ~/.bashrc
           "
@@ -294,7 +317,7 @@ jobs:
       - name: Restart Prefect services
         run: |
           echo "Restarting Prefect services on ${{ env.PREFECT_IP }}..."
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "
             cd ~/prefect
             docker-compose down
             export PREFECT_HOST=${{ env.PREFECT_IP }}
@@ -308,7 +331,7 @@ jobs:
           # Wait for container to be ready (max 120 seconds)
           for i in {1..24}; do
             # Use Python for health check instead of curl
-            if ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')\" 2>/dev/null"; then
+            if ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "docker exec prefect-server python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:4200/api/health')\" 2>/dev/null"; then
               echo "Prefect server is running and responsive"
               break
             fi
@@ -317,7 +340,7 @@ jobs:
             # Show logs after 5 attempts
             if [ $i -eq 5 ]; then
               echo "Server still starting up, checking logs:"
-              ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "docker logs prefect-server --tail=20"
+              ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "docker logs prefect-server --tail=20"
             fi
             
             sleep 5
@@ -327,7 +350,7 @@ jobs:
       - name: Configure Prefect API URL
         run: |
           echo "Setting Prefect API URL to use public IP..."
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "
             docker exec prefect-server bash -c 'prefect config set PREFECT_API_URL=http://${{ env.PREFECT_IP }}:4200/api'
             echo 'PREFECT_API_URL configuration set to http://${{ env.PREFECT_IP }}:4200/api'
           "
@@ -378,7 +401,7 @@ jobs:
         run: |
           echo "Deploying flows and configuring containers on ${{ env.PREFECT_IP }}..."
           
-          ssh -i ~/.ssh/${{ secrets.SSH_KEY_NAME }} ec2-user@${{ env.PREFECT_IP }} "
+          ssh -i $SSH_KEY_PATH ec2-user@${{ env.PREFECT_IP }} "
             cd ~/prefect
             
             # Check if deploy_flows.sh exists and is executable
