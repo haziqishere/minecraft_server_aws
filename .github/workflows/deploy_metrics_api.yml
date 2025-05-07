@@ -357,13 +357,34 @@ jobs:
           exit 1
           "
       
-      # Update Firewall rule if needed
+      # Update Firewall Rule if needed
       - name: Update Firewall Rule
         run: |
-          echo "Ensuring Lightsail firewall allows port ${{ env.METRICS_API_PORT }}..."
-          aws lightsail open-instance-public-ports \
-            --port-info fromPort=${{ env.METRICS_API_PORT }},toPort=${{ env.METRICS_API_PORT }},protocol=TCP \
-            --instance-name $(cd terraform && terraform output -raw lightsail_instance_name)
+          echo "Ensuring Lightsail firewall allows port ${{ env.METRICS_API_PORT }} on Minecraft server..."
+          
+          # Try to get Minecraft instance name directly from secrets first (preferred method)
+          MINECRAFT_INSTANCE_NAME="${{ secrets.MINECRAFT_INSTANCE_NAME }}"
+          
+          # If no instance name in secrets, try Terraform as fallback to get the Minecraft server instance name
+          if [ -z "$MINECRAFT_INSTANCE_NAME" ] && [ -d "terraform" ]; then
+            echo "Using Terraform to get Minecraft server instance name..."
+            cd terraform
+            terraform init -input=false > /dev/null
+            # This should specifically get the Minecraft server instance name
+            MINECRAFT_INSTANCE_NAME=$(terraform output -raw minecraft_instance_name 2>/dev/null || echo "")
+            cd ..
+          fi
+          
+          # Open port if we have an instance name
+          if [ -n "$MINECRAFT_INSTANCE_NAME" ]; then
+            echo "Opening port ${{ env.METRICS_API_PORT }} on Minecraft instance $MINECRAFT_INSTANCE_NAME..."
+            aws lightsail open-instance-public-ports \
+              --port-info fromPort=${{ env.METRICS_API_PORT }},toPort=${{ env.METRICS_API_PORT }},protocol=TCP \
+              --instance-name $MINECRAFT_INSTANCE_NAME
+          else
+            echo "WARNING: Could not determine Minecraft server Lightsail instance name."
+            echo "Please ensure port ${{ env.METRICS_API_PORT }} is open in your Minecraft server's Lightsail firewall manually."
+          fi
       
       # Output success message
       - name: Success
