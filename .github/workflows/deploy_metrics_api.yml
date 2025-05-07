@@ -187,6 +187,8 @@ jobs:
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/docker-compose.yml ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/requirements.txt ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/metrics_api_server.py ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+          scp -i ${{ env.SSH_KEY_PATH }} metrics_api/deploy.sh ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+          ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "chmod +x /opt/metrics-api/deploy.sh"
       
       # Build and start the Docker container
       - name: Build and start container
@@ -201,7 +203,17 @@ jobs:
           
           # Check docker and docker-compose are installed and working
           echo 'Checking Docker installation:'
-          docker --version
+          docker --version || { echo 'Docker not installed!'; exit 1; }
+          
+          # Install docker-compose if not available
+          if ! command -v docker-compose &> /dev/null; then
+            echo 'Docker Compose not found. Installing it...'
+            sudo curl -L \"https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64\" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+          fi
+          
+          # Verify docker-compose installation
           docker-compose --version
           
           # Stop any existing container
@@ -210,6 +222,12 @@ jobs:
           # Check files exist
           echo 'Checking files exist:'
           ls -la
+          
+          # Add docker socket access if needed for container metrics
+          if ! grep -q '/var/run/docker.sock:/var/run/docker.sock' docker-compose.yml; then
+            echo 'Enabling Docker socket access for container metrics...'
+            sed -i 's|# - /var/run/docker.sock:/var/run/docker.sock|- /var/run/docker.sock:/var/run/docker.sock|g' docker-compose.yml
+          fi
           
           # Build and start the container
           echo 'Building and starting container...'
@@ -276,41 +294,66 @@ jobs:
         run: |
           echo "Waiting for API to be ready..."
           # Give the API some time to start up
-          sleep 5
+          sleep 10
           
           # Check if the API is responding
           ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "
-          # Check if container exists first
-          if ! docker ps -a | grep -q minecraft-metrics-api; then
-            echo 'ERROR: Container minecraft-metrics-api does not exist. Check docker-compose logs:'
+          # Make sure docker-compose is available
+          if ! command -v docker-compose &> /dev/null; then
+            echo 'Docker Compose not found. Using docker commands instead.'
+            # Check if container exists 
+            if ! docker ps -a | grep -q minecraft-metrics-api; then
+              echo 'ERROR: Container minecraft-metrics-api does not exist.'
+              cd /opt/metrics-api
+              echo 'Checking files in /opt/metrics-api:'
+              ls -la
+              echo 'Content of Dockerfile:'
+              cat Dockerfile
+              echo 'Content of docker-compose.yml:'
+              cat docker-compose.yml
+              exit 1
+            fi
+            
+            # Check if container is running
+            if ! docker ps | grep -q minecraft-metrics-api; then
+              echo 'ERROR: Container minecraft-metrics-api exists but is not running:'
+              docker ps -a | grep minecraft-metrics-api
+              echo 'Container logs:'
+              docker logs minecraft-metrics-api
+              exit 1
+            fi
+          else
+            # Using docker-compose
             cd /opt/metrics-api
-            docker-compose logs
-            echo 'Checking docker-compose.yml content:'
-            cat docker-compose.yml
-            exit 1
-          fi
-          
-          # Check if container is running
-          if ! docker ps | grep -q minecraft-metrics-api; then
-            echo 'ERROR: Container minecraft-metrics-api exists but is not running:'
-            docker ps -a | grep minecraft-metrics-api
-            echo 'Container logs:'
-            docker logs minecraft-metrics-api
-            exit 1
+            
+            # Check container status
+            echo 'Checking container status with docker-compose:'
+            docker-compose ps
+            
+            # Check logs if needed
+            if ! docker ps | grep -q minecraft-metrics-api; then
+              echo 'Container logs:'
+              docker-compose logs
+              exit 1
+            fi
           fi
           
           # Try to reach the health endpoint
+          echo 'Testing API health endpoint...'
           for i in {1..10}; do
             if curl -s http://localhost:${{ env.METRICS_API_PORT }}/api/v1/health | grep -q healthy; then
               echo 'API is healthy!'
               exit 0
             fi
-            echo 'Waiting for API to be ready... Attempt $i/10'
+            echo \"Waiting for API to be ready... Attempt \$i/10\"
             sleep 2
           done
           
-          echo 'API failed to respond to health checks:'
-          docker logs minecraft-metrics-api
+          echo 'API failed to respond to health checks.'
+          echo 'Checking if container is running:'
+          docker ps | grep minecraft-metrics-api || echo 'Container not running'
+          echo 'Container logs:'
+          docker logs minecraft-metrics-api || echo 'Failed to get logs'
           exit 1
           "
       
