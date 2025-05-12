@@ -1,0 +1,8 @@
+{
+    "instance_name": "kroni-survival-server",
+    "region": "ap-southeast-1",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1371524341363118100/7Tc0uhh0Qe5daqLD20lp8u5woVsxRVTxUp3CxdGvluS1f00pRb4bsvBQ2bf6WZ4Qzjmn",
+    "minecraft_container_name": "minecraft-server",
+    "data_path": "/data",
+    "world_path": "/data/world"
+}

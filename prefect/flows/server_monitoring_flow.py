@@ -23,17 +23,36 @@ from typing import Dict, Optional
 from prefect import flow, task, get_run_logger
 import requests
 
-# Default config
-DEFAULT_CONFIG = {
-    "instance_name": "kroni-survival-server",
-    "region": "ap-southeast-1",
-    "discord_webhook_url": "https://discord.com/api/webhooks/1358469232613920998/gy6XxAzecIF3-uSh1WUu8LjbX4VtRHqncSmv2KB1IW5Y4rI5o1Dv_M5QMKuQvZCMvjm9",
-    "minecraft_container_name": "minecraft-server",
-    "data_path": "/data",
-    "world_path": "/data/world",
-    "metrics_api_url": os.environ.get("METRICS_API_URL", "http://localhost:8000"),
-    "metrics_api_key": os.environ.get("METRICS_API_KEY", "")
-}
+# Load configuration from JSON file
+def load_config():
+    """Load configuration from JSON file"""
+    config_path = Path(__file__).parent / "server_monitoring_config.json"
+    default_config = {
+        "instance_name": "kroni-survival-server",
+        "region": "ap-southeast-1",
+        "discord_webhook_url": "",  # Default empty, should be in config file
+        "minecraft_container_name": "minecraft-server",
+        "data_path": "/data",
+        "world_path": "/data/world",
+        "metrics_api_url": os.environ.get("METRICS_API_URL", "http://localhost:8000"),
+        "metrics_api_key": os.environ.get("METRICS_API_KEY", "")
+    }
+    
+    try:
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                loaded_config = json.load(f)
+                default_config.update(loaded_config)
+                return default_config
+        else:
+            print(f"Warning: Config file {config_path} not found, using defaults")
+            return default_config
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return default_config
+
+# Load config at module level
+DEFAULT_CONFIG = load_config()
 
 @task(name="Check Minecraft Server Status")
 def check_server_status(api_url: str, api_key: str) -> bool:

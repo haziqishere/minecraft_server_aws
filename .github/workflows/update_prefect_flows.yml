@@ -161,6 +161,12 @@ jobs:
             fi
           done
           
+          # Copy config files for the flows
+          if [ -f "prefect/flows/server_monitoring_config.json" ]; then
+            echo "Copying server_monitoring_config.json"
+            scp -i $SSH_KEY_PATH prefect/flows/server_monitoring_config.json ec2-user@${{ env.PREFECT_IP }}:~/prefect/flows/
+          fi
+          
           # Copy requirements.txt
           if [ -f "prefect/requirements.txt" ]; then
             echo "Copying requirements.txt"
