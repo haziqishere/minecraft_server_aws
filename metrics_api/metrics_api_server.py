@@ -81,8 +81,9 @@ async def health_check():
 @app.get("/api/v1/system/metrics", dependencies=[Depends(get_api_key)])
 async def get_system_metrics():
     try:
-        # Get CPU usage
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # Get CPU usage with a short interval to ensure accurate reading
+        # Using a small interval (0.5s) to avoid blocking the request for too long
+        cpu_percent = psutil.cpu_percent(interval=0.5)
         
         # Get memory usage
         memory = psutil.virtual_memory()
@@ -142,6 +143,10 @@ async def get_system_metrics():
         if data_disk_info:
             metrics["disk"]["data"] = data_disk_info
         
+        # Log metrics for debugging
+        logger.info(f"System metrics collected: CPU={cpu_percent}%, Memory={memory_percent}%, "
+                  f"Disk={root_disk_percent}%")
+        
         return metrics
     except Exception as e:
         logger.error(f"Error getting system metrics: {e}")
@@ -175,6 +180,9 @@ async def get_minecraft_metrics():
                 metrics["memory_usage"] = parts[2].strip()
                 metrics["memory_percent"] = parts[3].strip()
                 
+                # Log Minecraft metrics for debugging
+                logger.info(f"Minecraft metrics: CPU={parts[1].strip()}, Memory={parts[3].strip()}")
+                
                 # Get container uptime
                 uptime_result = subprocess.run(
                     ["docker", "inspect", "--format", "{{.State.StartedAt}}", "minecraft-server"],
@@ -189,6 +197,7 @@ async def get_minecraft_metrics():
                     metrics["uptime"] = int(uptime_seconds)
         else:
             metrics["status"] = "stopped"
+            logger.warning("Minecraft container not running or not found")
         
         # Get world size
         world_path = os.getenv("MINECRAFT_WORLD_PATH", "/data/world")
@@ -204,6 +213,8 @@ async def get_minecraft_metrics():
             metrics["world_size_bytes"] = total_size
             metrics["world_size_mb"] = total_size / (1024 * 1024)
             metrics["world_size_gb"] = total_size / (1024 * 1024 * 1024)
+            
+            logger.info(f"World size: {metrics['world_size_gb']:.2f} GB")
         
         return metrics
     except Exception as e:

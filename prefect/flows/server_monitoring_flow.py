@@ -109,16 +109,17 @@ def get_system_metrics(api_url: str, api_key: str) -> Dict:
             raise Exception(f"API error: {system_response.status_code}")
             
         system_data = system_response.json()
+        logger.info(f"Raw system data: {json.dumps(system_data)}")
         
         # Format system metrics to match the expected structure
         metrics = {
             "timestamp": datetime.datetime.now().isoformat(),
             "system": {
-                "cpu_percent": system_data["cpu"]["usage_percent"],
-                "memory_percent": system_data["memory"]["used_percent"],
+                "cpu_percent": float(system_data["cpu"]["usage_percent"]),
+                "memory_percent": float(system_data["memory"]["used_percent"]),
                 "memory_used_mb": round(system_data["memory"]["used"] / (1024 * 1024), 2),
                 "memory_total_mb": round(system_data["memory"]["total"] / (1024 * 1024), 2),
-                "root_disk_percent": system_data["disk"]["root"]["used_percent"],
+                "root_disk_percent": float(system_data["disk"]["root"]["used_percent"]),
                 "root_disk_used_gb": round(system_data["disk"]["root"]["used"] / (1024 * 1024 * 1024), 2),
                 "root_disk_total_gb": round(system_data["disk"]["root"]["total"] / (1024 * 1024 * 1024), 2),
             }
@@ -126,19 +127,20 @@ def get_system_metrics(api_url: str, api_key: str) -> Dict:
         
         # Add data disk if available
         if "data" in system_data["disk"]:
-            metrics["system"]["data_disk_percent"] = system_data["disk"]["data"]["percent"]
+            metrics["system"]["data_disk_percent"] = float(system_data["disk"]["data"]["percent"])
             metrics["system"]["data_disk_used_gb"] = round(system_data["disk"]["data"]["used"] / (1024 * 1024 * 1024), 2)
             metrics["system"]["data_disk_total_gb"] = round(system_data["disk"]["data"]["total"] / (1024 * 1024 * 1024), 2)
         
         # Add load averages if available
         if "load_avg" in system_data:
-            metrics["system"]["load_avg_1min"] = system_data["load_avg"]["1min"]
-            metrics["system"]["load_avg_5min"] = system_data["load_avg"]["5min"]
-            metrics["system"]["load_avg_15min"] = system_data["load_avg"]["15min"]
+            metrics["system"]["load_avg_1min"] = float(system_data["load_avg"]["1min"])
+            metrics["system"]["load_avg_5min"] = float(system_data["load_avg"]["5min"])
+            metrics["system"]["load_avg_15min"] = float(system_data["load_avg"]["15min"])
         
         # Add Minecraft metrics if available
         if minecraft_response.status_code == 200:
             minecraft_data = minecraft_response.json()
+            logger.info(f"Raw minecraft data: {json.dumps(minecraft_data)}")
             if minecraft_data.get("status") == "running":
                 metrics["minecraft"] = {
                     "cpu_percent": minecraft_data.get("cpu_percent", "0%"),
@@ -147,10 +149,13 @@ def get_system_metrics(api_url: str, api_key: str) -> Dict:
                 }
         
         logger.info(f"Collected system metrics successfully via API")
+        logger.info(f"Processed metrics: {json.dumps(metrics)}")
         return metrics
     
     except Exception as e:
         logger.error(f"Failed to collect system metrics via API: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             "timestamp": datetime.datetime.now().isoformat(),
             "system": {
@@ -222,10 +227,28 @@ def send_metrics_to_discord(
         status_emoji = "✅" if server_running else "❌"
         server_status = "Running" if server_running else "Stopped"
         
-        # Set colors based on resource usage levels
-        cpu_percent = metrics["system"]["cpu_percent"]
-        memory_percent = metrics["system"]["memory_percent"]
-        disk_percent = metrics["system"]["root_disk_percent"]
+        # Ensure metrics exist and have the correct structure
+        if "system" not in metrics:
+            logger.error("Metrics dictionary missing 'system' key")
+            return False
+        
+        # Get values with safety checks
+        cpu_percent = metrics["system"].get("cpu_percent", 0)
+        memory_percent = metrics["system"].get("memory_percent", 0)
+        disk_percent = metrics["system"].get("root_disk_percent", 0)
+        
+        # Convert string percentages to float if needed
+        if isinstance(cpu_percent, str) and "%" in cpu_percent:
+            cpu_percent = float(cpu_percent.replace("%", ""))
+        if isinstance(memory_percent, str) and "%" in memory_percent:
+            memory_percent = float(memory_percent.replace("%", ""))
+        if isinstance(disk_percent, str) and "%" in disk_percent:
+            disk_percent = float(disk_percent.replace("%", ""))
+            
+        # Ensure all are float type
+        cpu_percent = float(cpu_percent)
+        memory_percent = float(memory_percent)
+        disk_percent = float(disk_percent)
         
         # Determine overall health 
         if cpu_percent > 90 or memory_percent > 90 or disk_percent > 90:
@@ -241,16 +264,26 @@ def send_metrics_to_discord(
         # Format timestamp
         timestamp = datetime.datetime.now().isoformat()
         
-        # Ensure all values are of the right types for formatting
-        cpu_value = f"{float(cpu_percent):.1f}%" if isinstance(cpu_percent, (int, float)) else cpu_percent
-        memory_used = metrics["system"]["memory_used_mb"]
-        memory_used_str = f"{float(memory_used):.0f}" if isinstance(memory_used, (int, float)) else memory_used
-        memory_value = f"{float(memory_percent):.1f}% ({memory_used_str} MB)"
+        # Format CPU value
+        cpu_value = f"{cpu_percent:.1f}%"
         
-        disk_percent_value = float(disk_percent) if isinstance(disk_percent, (int, float)) else float(disk_percent.replace('%', ''))
-        disk_used = metrics["system"]["root_disk_used_gb"]
-        disk_used_str = disk_used if isinstance(disk_used, str) else f"{float(disk_used):.1f}"
-        disk_value = f"{disk_percent_value:.1f}% ({disk_used_str} GB)"
+        # Format memory value
+        memory_used = metrics["system"].get("memory_used_mb", 0)
+        if isinstance(memory_used, str):
+            try:
+                memory_used = float(memory_used)
+            except ValueError:
+                memory_used = 0
+        memory_value = f"{memory_percent:.1f}% ({int(memory_used)} MB)"
+        
+        # Format disk value
+        disk_used = metrics["system"].get("root_disk_used_gb", 0)
+        if isinstance(disk_used, str):
+            try:
+                disk_used = float(disk_used)
+            except ValueError:
+                disk_used = 0
+        disk_value = f"{disk_percent:.1f}% ({disk_used:.1f} GB)"
         
         # Build fields
         fields = [
@@ -285,28 +318,42 @@ def send_metrics_to_discord(
         if "data_disk_percent" in metrics["system"]:
             data_percent = metrics["system"]["data_disk_percent"]
             data_used = metrics["system"]["data_disk_used_gb"]
-            data_used_str = data_used if isinstance(data_used, str) else f"{float(data_used):.1f}"
-            data_percent_value = float(data_percent) if isinstance(data_percent, (int, float)) else float(data_percent.replace('%', ''))
+            
+            # Convert to float if needed
+            if isinstance(data_percent, str) and "%" in data_percent:
+                data_percent = float(data_percent.replace("%", ""))
+            if isinstance(data_used, str):
+                try:
+                    data_used = float(data_used)
+                except ValueError:
+                    data_used = 0
+                    
+            data_percent = float(data_percent)
+            data_used = float(data_used)
             
             fields.append({
                 "name": "Data Disk Usage",
-                "value": f"{data_percent_value:.1f}% ({data_used_str} GB)",
+                "value": f"{data_percent:.1f}% ({data_used:.1f} GB)",
                 "inline": True
             })
         
         # Add world size if available
         if world_size is not None:
-            fields.append({
-                "name": "World Size",
-                "value": f"{world_size:.2f} GB",
-                "inline": True
-            })
+            try:
+                world_size_float = float(world_size)
+                fields.append({
+                    "name": "World Size",
+                    "value": f"{world_size_float:.2f} GB",
+                    "inline": True
+                })
+            except (ValueError, TypeError):
+                logger.warning(f"Could not convert world size to float: {world_size}")
         
         # Add load averages if available
-        if "load_avg_1min" in metrics["system"]:
-            load1 = metrics["system"]["load_avg_1min"]
-            load5 = metrics["system"]["load_avg_5min"]
-            load15 = metrics["system"]["load_avg_15min"]
+        if all(k in metrics["system"] for k in ["load_avg_1min", "load_avg_5min", "load_avg_15min"]):
+            load1 = float(metrics["system"]["load_avg_1min"])
+            load5 = float(metrics["system"]["load_avg_5min"])
+            load15 = float(metrics["system"]["load_avg_15min"])
             fields.append({
                 "name": "Load Average",
                 "value": f"{load1:.2f}, {load5:.2f}, {load15:.2f}",
@@ -342,6 +389,9 @@ def send_metrics_to_discord(
             ]
         }
         
+        # Log payload for debugging
+        logger.info(f"Discord payload: {json.dumps(payload)}")
+        
         # Send the notification
         response = requests.post(
             webhook_url,
@@ -355,6 +405,8 @@ def send_metrics_to_discord(
     
     except Exception as e:
         logger.error(f"Failed to send Discord notification: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 @flow(name="Kroni Survival Server Monitoring")
