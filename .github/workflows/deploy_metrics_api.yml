@@ -268,14 +268,13 @@ jobs:
             
             # Update environment variables
             ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "
-            cat > ~/prefect/.env << 'PREFECT_EOF'
-            PREFECT_API_URL=http://$PREFECT_IP:4200/api
-            METRICS_API_URL=http://${{ env.MINECRAFT_IP }}:8000
-            METRICS_API_KEY=${{ env.API_KEY }}
-            PREFECT_EOF
-            
+            echo 'PREFECT_API_URL=http://$PREFECT_IP:4200/api' > ~/prefect/.env
+            echo 'METRICS_API_URL=http://${{ env.MINECRAFT_IP }}:8000' >> ~/prefect/.env
+            echo 'METRICS_API_KEY=${{ env.API_KEY }}' >> ~/prefect/.env
+
             # Restart Prefect to pick up new variables
             cd ~/prefect && docker-compose down && docker-compose up -d
+            "
             
             # Wait for server to start
             sleep 10
