@@ -275,11 +275,12 @@ jobs:
             # Restart Prefect to pick up new variables
             cd ~/prefect && docker-compose down && docker-compose up -d
             "
-            
+
             # Wait for server to start
             sleep 10
-            
+
             # Register the flow
+            ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "
             docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy server_monitoring_flow.py:server_monitoring_flow -n server_monitoring_flow-deployment --pool default -v'
             "
             
