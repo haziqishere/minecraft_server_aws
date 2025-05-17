@@ -187,8 +187,24 @@ jobs:
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/docker-compose.yml ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/requirements.txt ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
           scp -i ${{ env.SSH_KEY_PATH }} metrics_api/metrics_api_server.py ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
-          scp -i ${{ env.SSH_KEY_PATH }} metrics_api/deploy.sh ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
-          ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "chmod +x /opt/metrics-api/deploy.sh"
+          
+          # Copy diagnostic and fix scripts if they exist
+          if [ -f "metrics_api/diagnose.sh" ]; then
+            echo "Copying diagnostic script..."
+            scp -i ${{ env.SSH_KEY_PATH }} metrics_api/diagnose.sh ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+            ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "chmod +x /opt/metrics-api/diagnose.sh"
+          fi
+          
+          if [ -f "metrics_api/fix_container_detection.sh" ]; then
+            echo "Copying fix script..."
+            scp -i ${{ env.SSH_KEY_PATH }} metrics_api/fix_container_detection.sh ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+            ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "chmod +x /opt/metrics-api/fix_container_detection.sh"
+          fi
+          
+          if [ -f "metrics_api/deploy.sh" ]; then
+            scp -i ${{ env.SSH_KEY_PATH }} metrics_api/deploy.sh ec2-user@${{ env.MINECRAFT_IP }}:/opt/metrics-api/
+            ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@${{ env.MINECRAFT_IP }} "chmod +x /opt/metrics-api/deploy.sh"
+          fi
       
       # Build and start the Docker container
       - name: Build and start container
@@ -216,6 +232,15 @@ jobs:
           # Verify docker-compose installation
           docker-compose --version
           
+          # Fix Docker socket permissions
+          if [ -e \"/var/run/docker.sock\" ]; then
+            echo 'Checking Docker socket permissions...'
+            if ! [ -r \"/var/run/docker.sock\" ] || ! [ -w \"/var/run/docker.sock\" ]; then
+              echo 'Fixing Docker socket permissions...'
+              sudo chmod 666 /var/run/docker.sock
+            fi
+          fi
+          
           # Stop any existing container
           docker-compose down || true
           
@@ -223,8 +248,8 @@ jobs:
           echo 'Checking files exist:'
           ls -la
           
-          # Add docker socket access if needed for container metrics
-          if ! grep -q '/var/run/docker.sock:/var/run/docker.sock' docker-compose.yml; then
+          # Ensure Docker socket access
+          if ! grep -q '/var/run/docker.sock:/var/run/docker.sock' docker-compose.yml || grep -q '# - /var/run/docker.sock:/var/run/docker.sock' docker-compose.yml; then
             echo 'Enabling Docker socket access for container metrics...'
             sed -i 's|# - /var/run/docker.sock:/var/run/docker.sock|- /var/run/docker.sock:/var/run/docker.sock|g' docker-compose.yml
           fi
@@ -289,7 +314,7 @@ jobs:
             echo "Prefect server IP not found, skipping Prefect update"
           fi
       
-      # Verify API is working
+      # Verify API is working and diagnose any issues
       - name: Verify API
         run: |
           echo "Waiting for API to be ready..."
@@ -343,6 +368,30 @@ jobs:
           for i in {1..10}; do
             if curl -s http://localhost:${{ env.METRICS_API_PORT }}/api/v1/health | grep -q healthy; then
               echo 'API is healthy!'
+              # Also test the minecraft metrics endpoint
+              echo 'Testing Minecraft metrics...'
+              MINECRAFT_STATUS=\$(curl -s -H \"X-API-Key: ${{ env.API_KEY }}\" http://localhost:${{ env.METRICS_API_PORT }}/api/v1/minecraft/metrics | grep -o '\"status\":\"[^\"]*\"' | cut -d'\"' -f4)
+              echo \"Minecraft server status reported by API: \$MINECRAFT_STATUS\"
+              
+              # Check if the container is running via docker
+              if docker ps | grep minecraft-server | grep -q \"Up\"; then
+                echo \"Docker reports: Minecraft server is running\"
+                if [ \"\$MINECRAFT_STATUS\" != \"running\" ]; then
+                  echo \"WARNING: API reporting '\$MINECRAFT_STATUS' but container is running!\"
+                  echo \"This might indicate a permission issue or container detection problem.\"
+                  
+                  # Fix permissions if needed
+                  if [ -f \"/opt/metrics-api/fix_container_detection.sh\" ]; then
+                    echo \"Running fix script...\"
+                    cd /opt/metrics-api && bash ./fix_container_detection.sh
+                  fi
+                else
+                  echo \"SUCCESS: Container status correctly reported as running!\"
+                fi
+              else
+                echo \"Docker reports: Minecraft server is stopped, API correctly reports '\$MINECRAFT_STATUS'\"
+              fi
+              
               exit 0
             fi
             echo \"Waiting for API to be ready... Attempt \$i/10\"
