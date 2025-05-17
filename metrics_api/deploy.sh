@@ -46,10 +46,33 @@ if [ ! -f "docker-compose.yml" ] || [ ! -f "Dockerfile" ] || [ ! -f "metrics_api
   exit 1
 fi
 
-# Enable Docker socket access for container metrics
+# Add docker group to current user if not already in it
+if ! groups | grep -q docker; then
+  echo "Adding current user to docker group..."
+  sudo usermod -aG docker "$(whoami)"
+  echo "You may need to log out and back in for group changes to take effect."
+  echo "Alternatively, run the docker commands with sudo."
+fi
+
+# Check if docker-compose.yml has docker socket access
 if ! grep -q '/var/run/docker.sock:/var/run/docker.sock' docker-compose.yml; then
   echo "Enabling Docker socket access for container metrics..."
-  sed -i 's|# - /var/run/docker.sock:/var/run/docker.sock|- /var/run/docker.sock:/var/run/docker.sock|g' docker-compose.yml
+  if grep -q '# - /var/run/docker.sock:/var/run/docker.sock' docker-compose.yml; then
+    # Uncomment the line if it exists but is commented
+    sed -i 's|# - /var/run/docker.sock:/var/run/docker.sock|- /var/run/docker.sock:/var/run/docker.sock|g' docker-compose.yml
+  else
+    # Add the line if it doesn't exist
+    sed -i '/volumes:/a \ \ \ \ - /var/run/docker.sock:/var/run/docker.sock' docker-compose.yml
+  fi
+fi
+
+# Ensure Docker socket has proper permissions
+if [ -e "/var/run/docker.sock" ]; then
+  echo "Checking Docker socket permissions..."
+  if ! [ -r "/var/run/docker.sock" ] || ! [ -w "/var/run/docker.sock" ]; then
+    echo "Fixing Docker socket permissions..."
+    sudo chmod 666 /var/run/docker.sock
+  fi
 fi
 
 # Stop any running container

@@ -12,10 +12,13 @@ services:
       - METRICS_API_PORT=${METRICS_API_PORT:-8000}
     volumes:
       - /data:/data
-      # Uncomment if you need to access Docker socket
-      # - /var/run/docker.sock:/var/run/docker.sock
+      # Mount Docker socket for container metrics
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Try to mount Minecraft world data if available in different locations
+      - /var/lib/docker/volumes/minecraft-server_data/_data:/minecraft_data:ro
     networks:
       - metrics-network
+    user: "${UID:-1000}:${GID:-1000}"
 
 networks:
   metrics-network:
