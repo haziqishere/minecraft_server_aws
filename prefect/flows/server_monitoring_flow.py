@@ -360,13 +360,13 @@ def send_metrics_to_discord(
         if world_size is not None:
             try:
                 world_size_float = float(world_size)
-            fields.append({
-                "name": "World Size",
+                fields.append({
+                    "name": "World Size",
                     "value": f"{world_size_float:.2f} GB",
-                "inline": True
-            })
+                    "inline": True
+                })
             except (ValueError, TypeError):
-                logger.warning(f"Could not convert world size to float: {world_size}")
+                logger.warning(f"Could not convert world size '{world_size}' to float. Skipping world size in notification.")
         
         # Add load averages if available
         if all(k in metrics["system"] for k in ["load_avg_1min", "load_avg_5min", "load_avg_15min"]):
