@@ -289,25 +289,85 @@ jobs:
             ssh-keyscan -H $PREFECT_IP >> ~/.ssh/known_hosts
             
             # Copy server_monitoring_flow.py to Prefect
-            scp -i ${{ env.SSH_KEY_PATH }} prefect/flows/server_monitoring_flow.py ec2-user@$PREFECT_IP:~/prefect/flows/
+            # Ensure the local path to server_monitoring_flow.py is correct
+            if [ -f "prefect/flows/server_monitoring_flow.py" ]; then
+              scp -i ${{ env.SSH_KEY_PATH }} prefect/flows/server_monitoring_flow.py ec2-user@$PREFECT_IP:~/prefect/flows/
+            else
+              echo "::warning::prefect/flows/server_monitoring_flow.py not found in repository. Skipping copy."
+            fi
             
-            # Update environment variables
+            # Update environment variables and restart Prefect
             ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "
+            set -e # Exit on error within this SSH command block initially
             echo 'PREFECT_API_URL=http://$PREFECT_IP:4200/api' > ~/prefect/.env
             echo 'METRICS_API_URL=http://${{ env.MINECRAFT_IP }}:8000' >> ~/prefect/.env
             echo 'METRICS_API_KEY=${{ env.API_KEY }}' >> ~/prefect/.env
 
-            # Restart Prefect to pick up new variables
-            cd ~/prefect && docker-compose down && docker-compose up -d
+            echo 'Restarting Prefect services...'
+            cd ~/prefect
+            docker-compose down || echo 'Docker-compose down executed (may have failed if already down, this is often ok).'
+            
+            echo 'Attempting to start Prefect services with docker-compose up -d...'
+            # Allow docker-compose up -d to not immediately cause script exit
+            # We will verify service health in the subsequent loop
+            docker-compose up -d
+            UP_EXIT_CODE=$?
+            if [ $UP_EXIT_CODE -ne 0 ]; then
+              echo '::warning::docker-compose up -d exited with code $UP_EXIT_CODE. Will proceed to check service health.'
+              echo 'Fetching prefect-server logs if it had issues during up:'
+              docker-compose logs prefect-server || echo 'Failed to fetch prefect-server logs at this stage.'
+            else
+              echo 'docker-compose up -d command completed successfully (exit code 0).'
+            fi
+            echo 'Prefect services startup initiated by docker-compose.'
+            # Re-enable exit on error for subsequent critical commands if desired, or handle errors locally.
+            # set -e # Re-enable if needed, but the loop below has its own exit conditions
             "
 
-            # Wait for server to start
-            sleep 10
+            # Wait for Prefect server to be truly ready and check status
+            echo "Waiting for Prefect server to be ready and checking its status..."
+            WAIT_TIMEOUT=120 # 2 minutes
+            WAIT_INTERVAL=10  # Check every 10 seconds
+            ELAPSED_TIME=0
+            PREFECT_SERVER_HEALTHY=false
+            while [ $ELAPSED_TIME -lt $WAIT_TIMEOUT ]; do
+              # Check if prefect-server container is running and healthy
+              # The health status check (grep 'healthy') assumes your prefect-server has a healthcheck defined in its docker-compose service
+              if ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "docker ps --filter name=prefect-server --format '{{.Status}}' | grep -q 'Up.*\(healthy\)'"; then
+                echo "Prefect server is up and healthy."
+                PREFECT_SERVER_HEALTHY=true
+                break
+              # Check if it's running but maybe not healthy yet
+              elif ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "docker ps --filter name=prefect-server --format '{{.Status}}' | grep -q 'Up'"; then
+                echo "Prefect server is Up, but not (yet) healthy (Attempt: $((ELAPSED_TIME/WAIT_INTERVAL + 1)))... Current status:"
+                ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "cd ~/prefect && docker-compose ps prefect-server"
+              # Check if it's not running at all
+              elif ! ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "docker ps --filter name=prefect-server | grep -q prefect-server"; then
+                 echo "::error::Prefect server container is not running at all after docker-compose up."
+                 ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "cd ~/prefect && docker-compose ps && echo 'Fetching prefect-server logs:' && docker-compose logs prefect-server"
+                 exit 1
+              else
+                echo "Prefect server status is unclear or still starting (Attempt: $((ELAPSED_TIME/WAIT_INTERVAL + 1)))... Current status:"
+                ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "cd ~/prefect && docker-compose ps prefect-server"
+              fi
+              sleep $WAIT_INTERVAL
+              ELAPSED_TIME=$((ELAPSED_TIME + WAIT_INTERVAL))
+            done
+
+            if [ "$PREFECT_SERVER_HEALTHY" = "false" ]; then
+              echo "::error::Prefect server did not become healthy within $WAIT_TIMEOUT seconds."
+              ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "cd ~/prefect && echo 'Current docker-compose status:' && docker-compose ps && echo 'Fetching prefect-server logs:' && docker-compose logs prefect-server"
+              exit 1
+            fi
 
             # Register the flow
-            ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "
-            docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy server_monitoring_flow.py:server_monitoring_flow -n server_monitoring_flow-deployment --pool default'
-            "
+            echo "Registering the flow..."
+            if ! ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "docker exec prefect-server bash -c 'cd /opt/prefect/flows && prefect deploy server_monitoring_flow.py:server_monitoring_flow -n server_monitoring_flow-deployment --pool default'"; then
+              echo "::error::Failed to register Prefect flow."
+              echo "Fetching prefect-server logs after deployment attempt:"
+              ssh -i ${{ env.SSH_KEY_PATH }} ec2-user@$PREFECT_IP "cd ~/prefect && docker-compose logs prefect-server"
+              exit 1
+            fi
             
             echo "Prefect server updated successfully!"
           else
