@@ -98,13 +98,13 @@ jobs:
               echo "::error::Failed to get Prefect IP from Terraform. Please add it to GitHub secrets as PREFECT_IP."
               exit 1
             fi
-          fi
-          
-          # Validate the IP
-          if [ -z "$PREFECT_IP" ]; then
+            fi
+            
+            # Validate the IP
+            if [ -z "$PREFECT_IP" ]; then
             echo "Prefect IP is empty."
             echo "::error::Prefect IP not found. Please add it to GitHub secrets as PREFECT_IP."
-            exit 1
+              exit 1
           fi
           
           echo "Using Prefect IP: $PREFECT_IP"
@@ -230,13 +230,13 @@ jobs:
               echo "::error::Failed to get Prefect IP from Terraform. Please add it to GitHub secrets as PREFECT_IP."
               exit 1
             fi
-          fi
-          
-          # Validate the IP
-          if [ -z "$PREFECT_IP" ]; then
+            fi
+            
+            # Validate the IP
+            if [ -z "$PREFECT_IP" ]; then
             echo "Prefect IP is empty."
             echo "::error::Prefect IP not found. Please add it to GitHub secrets as PREFECT_IP."
-            exit 1
+              exit 1
           fi
           
           echo "Using Prefect IP: $PREFECT_IP"

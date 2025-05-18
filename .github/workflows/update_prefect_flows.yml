@@ -57,12 +57,12 @@ jobs:
             sudo apt-get update && sudo apt-get install -y terraform
             
             # Initialize Terraform
-            cd terraform
-            echo "Initializing Terraform..."
-            terraform init -input=false
-            
-            # Get IP from Terraform output with error handling
-            echo "Getting Prefect IP from Terraform output..."
+              cd terraform
+              echo "Initializing Terraform..."
+              terraform init -input=false
+              
+              # Get IP from Terraform output with error handling
+              echo "Getting Prefect IP from Terraform output..."
             if ! PREFECT_IP=$(terraform output -raw prefect_orchestration_ip 2>/dev/null); then
               echo "Failed to get Prefect IP from Terraform output."
               echo "::error::Failed to get Prefect IP from Terraform. Please provide an IP address manually."
@@ -275,7 +275,7 @@ jobs:
               docker exec prefect-worker bash -c 'echo \"export METRICS_API_URL=${{ env.METRICS_API_URL }}\" >> /root/.bashrc'
               docker exec prefect-worker bash -c 'echo \"export METRICS_API_KEY=${{ env.METRICS_API_KEY }}\" >> /root/.bashrc'
             fi
-            
+
             # Set up the Prefect containers with proper configuration files
             if [ -f ~/prefect/bin/setup_prefect_containers.sh ]; then
               echo 'Setting up Prefect containers with proper configuration...'

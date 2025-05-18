@@ -28,11 +28,11 @@ def load_config():
     """Load configuration from JSON file"""
     config_path = Path(__file__).parent / "server_monitoring_config.json"
     default_config = {
-        "instance_name": "kroni-survival-server",
-        "region": "ap-southeast-1",
+    "instance_name": "kroni-survival-server",
+    "region": "ap-southeast-1",
         "discord_webhook_url": "",  # Default empty, should be in config file
-        "minecraft_container_name": "minecraft-server",
-        "data_path": "/data",
+    "minecraft_container_name": "minecraft-server",
+    "data_path": "/data",
         "world_path": "/data/world",
         "metrics_api_url": os.environ.get("METRICS_API_URL", "http://localhost:8000"),
         "metrics_api_key": os.environ.get("METRICS_API_KEY", "")
@@ -360,11 +360,11 @@ def send_metrics_to_discord(
         if world_size is not None:
             try:
                 world_size_float = float(world_size)
-                fields.append({
-                    "name": "World Size",
+            fields.append({
+                "name": "World Size",
                     "value": f"{world_size_float:.2f} GB",
-                    "inline": True
-                })
+                "inline": True
+            })
             except (ValueError, TypeError):
                 logger.warning(f"Could not convert world size to float: {world_size}")
         

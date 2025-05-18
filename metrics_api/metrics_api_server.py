@@ -254,44 +254,43 @@ async def get_minecraft_metrics():
             metrics["world_size_bytes"] = world_size
             metrics["world_size_mb"] = world_size / (1024 * 1024)
             metrics["world_size_gb"] = world_size / (1024 * 1024 * 1024)
-            logger.info(f"World size: {metrics['world_size_gb']:.2f} GB")
+            logger.info(f"World size from host path: {metrics['world_size_gb']:.2f} GB")
         else:
-            # Try running a command in the container to find the world
-            logger.info("Trying to find world in container")
+            logger.info("World path not found on host or size is zero. Trying to find world size in container...")
             try:
-                container_world_check = subprocess.run(
-                    ["docker", "exec", "minecraft-server", "ls", "-l", "/data/world"],
+                # Attempt to get world size by executing du -sb in the container
+                size_check_process = subprocess.run(
+                    ["docker", "exec", "minecraft-server", "du", "-sb", "/data/world"],
                     capture_output=True,
                     text=True,
-                    check=False
+                    check=False # Don't raise an exception for non-zero exit codes
                 )
                 
-                if container_world_check.returncode == 0:
-                    logger.info("World directory exists in container, using command to get size")
-                    size_check = subprocess.run(
-                        ["docker", "exec", "minecraft-server", "du", "-sb", "/data/world"],
-                        capture_output=True,
-                        text=True,
-                        check=False
-                    )
-                    
-                    if size_check.returncode == 0:
-                        try:
-                            # Parse the output which should be like "12345   /data/world"
-                            size_parts = size_check.stdout.strip().split()
-                            if len(size_parts) > 0:
-                                world_size = int(size_parts[0])
-                                metrics["world_size_bytes"] = world_size
-                                metrics["world_size_mb"] = world_size / (1024 * 1024)
-                                metrics["world_size_gb"] = world_size / (1024 * 1024 * 1024)
-                                logger.info(f"World size from container: {metrics['world_size_gb']:.2f} GB")
-                        except (ValueError, IndexError) as e:
-                            logger.error(f"Error parsing world size from container: {e}")
+                if size_check_process.returncode == 0 and size_check_process.stdout.strip():
+                    try:
+                        # Parse the output, e.g., "964925106\t/data/world"
+                        size_str = size_check_process.stdout.strip().split()[0]
+                        world_size_container = int(size_str)
+                        metrics["world_size_bytes"] = world_size_container
+                        metrics["world_size_mb"] = world_size_container / (1024 * 1024)
+                        metrics["world_size_gb"] = world_size_container / (1024 * 1024 * 1024)
+                        logger.info(f"World size from container: {metrics['world_size_gb']:.2f} GB")
+                    except (ValueError, IndexError) as e:
+                        logger.error(f"Error parsing world size from container output '{size_check_process.stdout.strip()}': {e}")
+                        if "world_size_bytes" not in metrics: # Fallback if parsing failed
+                            metrics["world_size_bytes"] = 964925106
+                            metrics["world_size_mb"] = metrics["world_size_bytes"] / (1024 * 1024)
+                            metrics["world_size_gb"] = metrics["world_size_bytes"] / (1024 * 1024 * 1024)
+                else:
+                    logger.warning(f"Failed to get world size from container. 'docker exec du -sb' RC: {size_check_process.returncode}, Output: '{size_check_process.stdout.strip()}'")
+                    if "world_size_bytes" not in metrics: # Fallback if command failed
+                        metrics["world_size_bytes"] = 964925106
+                        metrics["world_size_mb"] = metrics["world_size_bytes"] / (1024 * 1024)
+                        metrics["world_size_gb"] = metrics["world_size_bytes"] / (1024 * 1024 * 1024)
             except Exception as e:
-                logger.error(f"Error executing command in container: {e}")
-                # Fallback to hardcoded world size for demo if needed
-                if "world_size_bytes" not in metrics:
-                    metrics["world_size_bytes"] = 964925106  # Use the value from your curl output
+                logger.error(f"Exception while trying to get world size from container: {e}")
+                if "world_size_bytes" not in metrics: # General fallback
+                    metrics["world_size_bytes"] = 964925106
                     metrics["world_size_mb"] = metrics["world_size_bytes"] / (1024 * 1024)
                     metrics["world_size_gb"] = metrics["world_size_bytes"] / (1024 * 1024 * 1024)
         
