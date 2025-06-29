@@ -25,7 +25,7 @@ Kroni Survival is a Minecraft server deployment solution that provides:
 
 ## 🏗️ Architecture
 
-![Kroni Survival AWS Architecture](documents/Phase-02-0Architecture.png)
+![Kroni Survival AWS Architecture](documents/Phase-2-Architecture.png)
 
 ```
                    ┌──────────────────────────────┐
