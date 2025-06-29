@@ -4,7 +4,7 @@
 
 Kroni Survival is a Minecraft server deployment solution that provides:
 
-- AWS Lightsail instance (1 vCPU, 1GB RAM) in Malaysia region
+- AWS Lightsail instance (4 vCPU, 4GB RAM) in Singapore region
 - Docker-based Minecraft server with cracked client support
 - Persistent storage for world data
 - Automated backups (S3 and Lightsail snapshots)
@@ -22,10 +22,10 @@ Kroni Survival is a Minecraft server deployment solution that provides:
   - S3 backups
 - **Discord Notifications** for backups and monitoring
 - **Prefect Workflows** for server monitoring and backup automation
-- **CloudWatch Integration** for system metrics
-- **Grafana Dashboard** for visualization
 
 ## 🏗️ Architecture
+
+![Kroni Survival AWS Architecture](documents/Phase%202%20Architecture.png)
 
 ```
                    ┌──────────────────────────────┐
